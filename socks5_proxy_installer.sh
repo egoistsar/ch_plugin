@@ -394,43 +394,85 @@ function create_dante_config() {
     # Create config directory if it doesn't exist
     mkdir -p /etc/dante-users
     
+    # Автоматическое определение интерфейса
+    # Пытаемся определить основной сетевой интерфейс
+    MAIN_INTERFACE=""
+    
+    # Метод 1: используя ip route
+    if command_exists "ip"; then
+        MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+    fi
+    
+    # Метод 2: используя route
+    if [ -z "$MAIN_INTERFACE" ] && command_exists "route"; then
+        MAIN_INTERFACE=$(route -n | grep '^0.0.0.0' | awk '{print $8}' | head -n1)
+    fi
+    
+    # Метод 3: используя ifconfig
+    if [ -z "$MAIN_INTERFACE" ] && command_exists "ifconfig"; then
+        MAIN_INTERFACE=$(ifconfig | grep -v lo | grep -E '^[a-zA-Z0-9]+' | awk '{print $1}' | sed 's/://' | head -n1)
+    fi
+    
+    # Если интерфейс не найден, используем eth0 как запасной вариант
+    if [ -z "$MAIN_INTERFACE" ]; then
+        MAIN_INTERFACE="eth0"
+        echo_warning "$(lang_text "Could not detect network interface, using eth0 as default" "Не удалось определить сетевой интерфейс, используем eth0 по умолчанию")"
+    else
+        log "Detected network interface: $MAIN_INTERFACE"
+    fi
+    
     # Create the configuration file
     cat > /etc/dante.conf << EOL
 # Dante SOCKS5 proxy server configuration
 
-# Log settings
-logoutput: syslog
+# Basic server settings
+logoutput: stderr
 
-# Server settings - слушаем на всех интерфейсах
-internal: 0.0.0.0 port = $PORT
+# Внутренний интерфейс - слушаем на всех сетевых интерфейсах и указанном порту
+internal: 0.0.0.0 port=$PORT
 
-# Authentication method
-socksmethod: username
+# Внешний интерфейс - используем автоматически определенный интерфейс
+external: $MAIN_INTERFACE
 
-# Client access rules
-client pass {
-    from: 0.0.0.0/0 to: 0.0.0.0/0
-    log: error connect disconnect
-}
+# Используем аутентификацию по логину/паролю
+method: username
 
-# Authentication configuration
+# Настройки доступа
 user.privileged: root
 user.notprivileged: nobody
 
-# PAM authentication
-auth: pam
+# Правила для клиентов - разрешаем всем аутентифицированным пользователям подключаться
+client pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+}
 
-# Access rules
+# Правила для SOCKS - разрешаем все типы соединений через прокси
 socks pass {
     from: 0.0.0.0/0 to: 0.0.0.0/0
-    protocol: tcp udp
     command: bind connect udpassociate
-    log: error connect disconnect
-    socksmethod: username
+    method: username
+}
+
+# Используем PAM для аутентификации
+auth: pam
+EOL
+
+    # Создаем очень минималистичный конфиг как запасной вариант
+    cat > /etc/dante.conf.minimal << EOL
+logoutput: stderr
+internal: 0.0.0.0 port=$PORT
+method: none
+user.privileged: root
+user.notprivileged: nobody
+client pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+}
+socks pass {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
 }
 EOL
-    
-    echo_success "$(lang_text "Dante configuration created successfully" "Конфигурация Dante успешно создана")"
+
+    echo_success "$(lang_text "Dante configuration created successfully using interface $MAIN_INTERFACE" "Конфигурация Dante успешно создана с использованием интерфейса $MAIN_INTERFACE")"
 }
 
 # Function to configure systemd service
