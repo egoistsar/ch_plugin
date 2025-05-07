@@ -300,8 +300,24 @@ function add_proxy_user() {
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
-    # Create password hash
-    local hashed_password=$(mkpasswd -m sha-512 "$password")
+    # Create password hash using openssl (more portable than mkpasswd)
+    local salt=$(openssl rand -base64 12)
+    local hashed_password=$(openssl passwd -6 -salt "$salt" "$password")
+    
+    # If openssl fails, try using Python
+    if [ -z "$hashed_password" ]; then
+        if command -v python3 &>/dev/null; then
+            hashed_password=$(python3 -c "import crypt; print(crypt.crypt('$password', '\$6\$$salt'))")
+        elif command -v python &>/dev/null; then
+            hashed_password=$(python -c "import crypt; print(crypt.crypt('$password', '\$6\$$salt'))")
+        fi
+    fi
+    
+    # If all else fails, store plain password (temporary, for testing only)
+    if [ -z "$hashed_password" ]; then
+        echo_warning "$(lang_text "Warning: Could not hash password. Using plain text password temporarily." "Предупреждение: Не удалось хешировать пароль. Временно используется пароль в открытом виде.")"
+        hashed_password="$password"
+    fi
     
     # Add user to the database
     echo "$username:$hashed_password" >> /etc/dante-users/users.pwd
@@ -342,11 +358,30 @@ function ask_proxy_password() {
 
 # Function to manage proxy user credentials
 function manage_user_credentials() {
-    # First ask for username (separate question)
-    local proxy_username=$(ask_proxy_username)
+    local username_en="Enter a username for proxy authentication:"
+    local username_ru="Введите имя пользователя для аутентификации в прокси:"
     
-    # Then ask for password (separate question)
-    local proxy_password=$(ask_proxy_password)
+    # Ask for username directly (without using the function that might be recursively failing)
+    local proxy_username=""
+    while [ -z "$proxy_username" ]; do
+        read -p "$(lang_text "$username_en" "$username_ru") " proxy_username
+        if [ -z "$proxy_username" ]; then
+            echo_error "$(lang_text "Username cannot be empty" "Имя пользователя не может быть пустым")"
+        fi
+    done
+    
+    local password_en="Enter a password for proxy authentication:"
+    local password_ru="Введите пароль для аутентификации в прокси:"
+    
+    # Ask for password directly
+    local proxy_password=""
+    while [ -z "$proxy_password" ]; do
+        read -s -p "$(lang_text "$password_en" "$password_ru") " proxy_password
+        echo
+        if [ -z "$proxy_password" ]; then
+            echo_error "$(lang_text "Password cannot be empty" "Пароль не может быть пустым")"
+        fi
+    done
     
     # Add the user with the provided credentials
     add_proxy_user "$proxy_username" "$proxy_password"
@@ -448,8 +483,24 @@ function add_user() {
         return 1
     fi
     
-    # Create password hash
-    local hashed_password=\$(mkpasswd -m sha-512 "\$password")
+    # Create password hash using openssl (more portable than mkpasswd)
+    local salt=\$(openssl rand -base64 12)
+    local hashed_password=\$(openssl passwd -6 -salt "\$salt" "\$password")
+    
+    # If openssl fails, try using Python
+    if [ -z "\$hashed_password" ]; then
+        if command -v python3 &>/dev/null; then
+            hashed_password=\$(python3 -c "import crypt; print(crypt.crypt('\$password', '\\\$6\\\$\$salt'))")
+        elif command -v python &>/dev/null; then
+            hashed_password=\$(python -c "import crypt; print(crypt.crypt('\$password', '\\\$6\\\$\$salt'))")
+        fi
+    fi
+    
+    # If all else fails, store plain password (temporary, for testing only)
+    if [ -z "\$hashed_password" ]; then
+        echo "Warning: Could not hash password. Using plain text password temporarily."
+        hashed_password="\$password"
+    fi
     
     # Add user to the database
     echo "\$username:\$hashed_password" >> "\$USER_DB"
@@ -562,8 +613,8 @@ function uninstall_proxy() {
     fi
     
     # Remove firewall rules if they exist
-    if command -v ufw &>/dev/null && ufw status | grep -q "1080"; then
-        ufw delete allow 1080/tcp &>/dev/null
+    if command -v ufw &>/dev/null && ufw status | grep -q "$PORT"; then
+        ufw delete allow $PORT/tcp &>/dev/null
     fi
     
     # Remove files and directories
