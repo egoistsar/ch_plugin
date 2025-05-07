@@ -358,32 +358,44 @@ function ask_proxy_password() {
 
 # Function to manage proxy user credentials
 function manage_user_credentials() {
+    # Default credentials if input fails
+    local default_username="proxyuser"
+    local default_password="proxypass"
+    
+    # Prompt messages
     local username_en="Enter a username for proxy authentication:"
     local username_ru="Введите имя пользователя для аутентификации в прокси:"
-    
-    # Ask for username directly (without using the function that might be recursively failing)
-    local proxy_username=""
-    while [ -z "$proxy_username" ]; do
-        read -p "$(lang_text "$username_en" "$username_ru") " proxy_username
-        if [ -z "$proxy_username" ]; then
-            echo_error "$(lang_text "Username cannot be empty" "Имя пользователя не может быть пустым")"
-        fi
-    done
-    
     local password_en="Enter a password for proxy authentication:"
     local password_ru="Введите пароль для аутентификации в прокси:"
     
-    # Ask for password directly
-    local proxy_password=""
-    while [ -z "$proxy_password" ]; do
-        read -s -p "$(lang_text "$password_en" "$password_ru") " proxy_password
-        echo
-        if [ -z "$proxy_password" ]; then
-            echo_error "$(lang_text "Password cannot be empty" "Пароль не может быть пустым")"
-        fi
-    done
+    # Error messages
+    local username_err_en="Username cannot be empty. Using default: $default_username"
+    local username_err_ru="Имя пользователя не может быть пустым. Используется по умолчанию: $default_username"
+    local password_err_en="Password cannot be empty. Using default: $default_password"
+    local password_err_ru="Пароль не может быть пустым. Используется по умолчанию: $default_password"
     
-    # Add the user with the provided credentials
+    # Ask for username with timeout (to prevent hanging) - 60 minutes = 3600 seconds
+    echo "$(lang_text "$username_en" "$username_ru")"
+    read -t 3600 proxy_username
+    
+    # Use default if empty
+    if [ -z "$proxy_username" ]; then
+        echo_warning "$(lang_text "$username_err_en" "$username_err_ru")"
+        proxy_username="$default_username"
+    fi
+    
+    # Ask for password with timeout - 60 minutes = 3600 seconds
+    echo "$(lang_text "$password_en" "$password_ru")"
+    read -t 3600 -s proxy_password
+    echo
+    
+    # Use default if empty
+    if [ -z "$proxy_password" ]; then
+        echo_warning "$(lang_text "$password_err_en" "$password_err_ru")"
+        proxy_password="$default_password"
+    fi
+    
+    # Add the user with the provided or default credentials
     add_proxy_user "$proxy_username" "$proxy_password"
 }
 
