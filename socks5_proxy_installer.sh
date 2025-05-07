@@ -43,31 +43,34 @@ function lang_text() {
     fi
 }
 
-# Function for logging and displaying colored status messages
+# Function for logging plain text without colors
 function log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOGFILE"
+    # Strip ANSI color codes for log file
+    local plain_text=$(echo "$*" | sed 's/\x1b\[[0-9;]*m//g')
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $plain_text" >> "$LOGFILE"
 }
 
+# Function to display colored status messages
 function echo_status() {
-    log "${BLUE}>> $1${NC}"
+    log ">> $1"
     echo -e "\n${BLUE}>> $1${NC}"
 }
 
 # Function to display success messages
 function echo_success() {
-    log "${GREEN}✓ $1${NC}"
+    log "✓ $1"
     echo -e "\n${GREEN}✓ $1${NC}"
 }
 
 # Function to display error messages
 function echo_error() {
-    log "${RED}✗ $1${NC}"
+    log "✗ $1"
     echo -e "\n${RED}✗ $1${NC}"
 }
 
 # Function to display warning/info messages
 function echo_warning() {
-    log "${YELLOW}! $1${NC}"
+    log "! $1"
     echo -e "\n${YELLOW}! $1${NC}"
 }
 
@@ -377,20 +380,97 @@ EOL
 }
 
 # Function to check required dependencies
+function command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+function install_dependency() {
+    local package=$1
+    local cmd=$2
+    
+    echo_status "$(lang_text "Installing $package..." "Установка $package...")"
+    apt-get update -qq
+    apt-get install -y $package
+    
+    # Check if installation was successful
+    if ! command_exists "$cmd"; then
+        echo_error "$(lang_text "Failed to install $package" "Не удалось установить $package")"
+        return 1
+    fi
+    
+    echo_success "$(lang_text "$package installed successfully" "$package успешно установлен")"
+    return 0
+}
+
 function check_dependencies() {
     local message_en="Checking required dependencies..."
     local message_ru="Проверка необходимых зависимостей..."
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
-    for cmd in apt-get ip ufw openssl systemctl; do
-        if ! command -v $cmd >/dev/null; then
-            echo_error "$(lang_text "Required command not found: $cmd" "Требуемая команда не найдена: $cmd")"
-            exit 1
+    # Check for apt-get which is essential
+    if ! command_exists apt-get; then
+        echo_error "$(lang_text "apt-get not found. This script requires a Debian/Ubuntu based system." "apt-get не найден. Этот скрипт требует систему на базе Debian/Ubuntu.")"
+        exit 1
+    fi
+    
+    # Check for other dependencies and install if missing
+    local missing_deps=0
+    
+    # Build essential packages for commands that might be missing
+    local dependency_map=(
+        "iproute2:ip" 
+        "openssl:openssl" 
+        "systemd:systemctl"
+        "wget:wget"
+        "curl:curl"
+        "whois:mkpasswd"
+        "iptables:iptables"
+    )
+    
+    for dep in "${dependency_map[@]}"; do
+        IFS=':' read -r package cmd <<< "$dep"
+        
+        if ! command_exists "$cmd"; then
+            echo_warning "$(lang_text "Required command not found: $cmd" "Требуемая команда не найдена: $cmd")"
+            echo_status "$(lang_text "Trying to install $package..." "Попытка установить $package...")"
+            
+            if install_dependency "$package" "$cmd"; then
+                echo_success "$(lang_text "$cmd is now available" "$cmd теперь доступен")"
+            else
+                # For non-critical components like ufw, we'll just warn but continue
+                if [[ "$cmd" == "ufw" ]]; then
+                    echo_warning "$(lang_text "UFW firewall not available. Firewall configuration will be skipped." "Брандмауэр UFW недоступен. Настройка брандмауэра будет пропущена.")"
+                else
+                    echo_error "$(lang_text "Failed to install required dependency: $package" "Не удалось установить необходимую зависимость: $package")"
+                    ((missing_deps++))
+                fi
+            fi
         fi
     done
     
+    if [ $missing_deps -gt 0 ]; then
+        echo_error "$(lang_text "Some required dependencies could not be installed" "Некоторые необходимые зависимости не могут быть установлены")"
+        exit 1
+    fi
+    
     echo_success "$(lang_text "All required dependencies are available" "Все необходимые зависимости доступны")"
+}
+
+# Function to install prerequisites at the beginning of the script
+function install_prerequisites() {
+    local message_en="Preinstalling necessary packages..."
+    local message_ru="Предварительная установка необходимых пакетов..."
+    
+    echo_status "$(lang_text "$message_en" "$message_ru")"
+    
+    # Update package lists
+    apt-get update -qq
+    
+    # Install essential packages first
+    apt-get install -y apt-utils curl wget iproute2 net-tools openssl
+    
+    echo_success "$(lang_text "Essential prerequisites installed" "Основные предварительные пакеты установлены")"
 }
 
 # Function to update system and install required packages
@@ -418,7 +498,8 @@ function install_packages() {
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
-    apt-get install -y dante-server libpam-pwdfile sudo ufw whois
+    # Install all possible packages that might be needed
+    apt-get install -y dante-server libpam-pwdfile sudo ufw whois iptables systemd python3 gcc make
     
     echo_success "$(lang_text "Required packages installed successfully" "Необходимые пакеты успешно установлены")"
 }
@@ -429,6 +510,31 @@ function configure_firewall() {
     local message_ru="Настройка брандмауэра..."
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
+    
+    # Check if ufw is available
+    if ! command_exists "ufw"; then
+        echo_warning "$(lang_text "UFW firewall not available. Trying alternative firewall configuration." "Брандмауэр UFW недоступен. Пробуем альтернативную настройку брандмауэра.")"
+        
+        # Try to use iptables directly if available
+        if command_exists "iptables"; then
+            echo_status "$(lang_text "Using iptables for firewall configuration..." "Используем iptables для настройки брандмауэра...")"
+            
+            # Save current iptables rules
+            if command_exists "iptables-save"; then
+                iptables-save > /tmp/iptables.rules.bak
+            fi
+            
+            # Allow SSH and proxy port
+            iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+            iptables -A INPUT -p tcp --dport $PORT -j ACCEPT
+            
+            echo_success "$(lang_text "Firewall (iptables) configured successfully" "Брандмауэр (iptables) успешно настроен")"
+            return 0
+        else
+            echo_warning "$(lang_text "No firewall tools available. Skipping firewall configuration." "Нет доступных инструментов брандмауэра. Пропускаем настройку брандмауэра.")"
+            return 0
+        fi
+    fi
     
     # Add rules more safely
     ufw --force allow ssh
@@ -522,64 +628,147 @@ function manage_user_credentials() {
     local default_username="proxyuser"
     local default_password="proxypass"
     
-    # Prompt messages
-    local username_en="Enter a username for proxy authentication:"
-    local username_ru="Введите имя пользователя для аутентификации в прокси:"
-    local password_en="Enter a password for proxy authentication:"
-    local password_ru="Введите пароль для аутентификации в прокси:"
+    # Визуально отделяем этап настройки учетных данных
+    if [ "$LANGUAGE" == "ru" ]; then
+        echo -e "\n\n====================================="
+        echo -e "  НАСТРОЙКА УЧЕТНЫХ ДАННЫХ ПРОКСИ"
+        echo -e "=====================================\n"
+    else
+        echo -e "\n\n====================================="
+        echo -e "      PROXY CREDENTIALS SETUP"
+        echo -e "=====================================\n"
+    fi
     
-    # Error messages
-    local username_err_en="Username cannot be empty. Using default: $default_username"
-    local username_err_ru="Имя пользователя не может быть пустым. Используется по умолчанию: $default_username"
-    local password_err_en="Password cannot be empty. Using default: $default_password"
-    local password_err_ru="Пароль не может быть пустым. Используется по умолчанию: $default_password"
+    sleep 2 # Даем пользователю время прочитать заголовок
     
-    echo_status "$(lang_text "Setting up user credentials" "Настройка учетных данных пользователя")"
-    sleep 1
+    # --- USERNAME SECTION ---
+    # Запрашиваем имя пользователя без таймаута
+    if [ "$LANGUAGE" == "ru" ]; then
+        echo -e "Шаг 1: Введите имя пользователя для аутентификации в прокси.\n"
+        read -r -p "Имя пользователя: " proxy_username
+    else
+        echo -e "Step 1: Enter a username for proxy authentication.\n"
+        read -r -p "Username: " proxy_username
+    fi
     
-    # Ask for username with timeout (to prevent hanging) - 60 minutes = 3600 seconds
-    echo "$(lang_text "$username_en" "$username_ru")"
-    read -r -t 3600 proxy_username
-    echo
-    
-    # Use default if empty
+    # Проверка и обработка ввода имени пользователя
     if [ -z "$proxy_username" ]; then
-        echo_warning "$(lang_text "$username_err_en" "$username_err_ru")"
-        proxy_username="$default_username"
-    else
-        log "Username set to: $proxy_username"
         if [ "$LANGUAGE" == "ru" ]; then
-            echo "Имя пользователя установлено: $proxy_username"
+            echo -e "\nИмя пользователя не может быть пустым."
+            read -r -p "Введите имя пользователя или нажмите Enter для использования значения по умолчанию [$default_username]: " proxy_username
         else
-            echo "Username set to: $proxy_username"
+            echo -e "\nUsername cannot be empty."
+            read -r -p "Enter a username or press Enter to use default [$default_username]: " proxy_username
+        fi
+        
+        # Если пользователь снова ввел пустое значение, используем значение по умолчанию
+        if [ -z "$proxy_username" ]; then
+            proxy_username="$default_username"
+            if [ "$LANGUAGE" == "ru" ]; then
+                echo -e "\nИспользуется имя пользователя по умолчанию: $proxy_username\n"
+            else
+                echo -e "\nUsing default username: $proxy_username\n"
+            fi
+        fi
+    else
+        # Явное подтверждение выбранного имени пользователя
+        if [ "$LANGUAGE" == "ru" ]; then
+            echo -e "\nВыбранное имя пользователя: $proxy_username\n"
+        else
+            echo -e "\nSelected username: $proxy_username\n"
         fi
     fi
     
-    sleep 1
+    log "Username set to: $proxy_username"
+    sleep 2 # Пауза перед следующим шагом
     
-    # Ask for password with timeout - 60 minutes = 3600 seconds
-    # Make password visible instead of hidden to improve user experience
-    echo "$(lang_text "$password_en" "$password_ru")"
-    read -r -t 3600 proxy_password
-    echo
+    # --- PASSWORD SECTION ---
+    # Запрашиваем пароль без таймаута
+    if [ "$LANGUAGE" == "ru" ]; then
+        echo -e "Шаг 2: Введите пароль для пользователя '$proxy_username'.\n"
+        read -r -p "Пароль: " proxy_password
+    else
+        echo -e "Step 2: Enter a password for user '$proxy_username'.\n"
+        read -r -p "Password: " proxy_password
+    fi
     
-    # Use default if empty
+    # Проверка и обработка ввода пароля
     if [ -z "$proxy_password" ]; then
-        echo_warning "$(lang_text "$password_err_en" "$password_err_ru")"
-        proxy_password="$default_password"
-    else
-        log "Password has been set" # не логируем пароль в открытом виде
         if [ "$LANGUAGE" == "ru" ]; then
-            echo "Пароль установлен"
+            echo -e "\nПароль не может быть пустым."
+            read -r -p "Введите пароль или нажмите Enter для использования значения по умолчанию: " proxy_password
         else
-            echo "Password has been set"
+            echo -e "\nPassword cannot be empty."
+            read -r -p "Enter a password or press Enter to use default: " proxy_password
+        fi
+        
+        # Если пользователь снова ввел пустое значение, используем значение по умолчанию
+        if [ -z "$proxy_password" ]; then
+            proxy_password="$default_password"
+            if [ "$LANGUAGE" == "ru" ]; then
+                echo -e "\nИспользуется пароль по умолчанию\n"
+            else
+                echo -e "\nUsing default password\n"
+            fi
+        fi
+    else
+        # Подтверждение ввода пароля без отображения самого пароля
+        if [ "$LANGUAGE" == "ru" ]; then
+            echo -e "\nПароль успешно введен\n"
+        else
+            echo -e "\nPassword successfully entered\n"
         fi
     fi
     
-    sleep 1
+    log "Password has been set" # не логируем пароль в открытом виде
+    sleep 2 # Пауза перед следующим шагом
     
-    # Add the user with the provided or default credentials
-    add_proxy_user "$proxy_username" "$proxy_password"
+    # --- CONFIRMATION SECTION ---
+    # Запрашиваем подтверждение перед созданием пользователя
+    if [ "$LANGUAGE" == "ru" ]; then
+        echo -e "Шаг 3: Подтверждение создания пользователя.\n"
+        echo -e "Имя пользователя: $proxy_username"
+        echo -e "Пароль: [СКРЫТ]\n"
+        read -r -p "Создать пользователя с указанными учетными данными? (y/n): " confirm_creation
+    else
+        echo -e "Step 3: Confirm user creation.\n"
+        echo -e "Username: $proxy_username"
+        echo -e "Password: [HIDDEN]\n"
+        read -r -p "Create user with these credentials? (y/n): " confirm_creation
+    fi
+    
+    # Обработка подтверждения
+    if [[ "$confirm_creation" =~ ^[Yy]$ ]]; then
+        # Добавляем пользователя
+        add_proxy_user "$proxy_username" "$proxy_password"
+        
+        # Информация о параметрах подключения добавляется здесь для улучшения UX
+        if [ "$LANGUAGE" == "ru" ]; then
+            echo -e "\nДля подключения к прокси используйте следующие параметры:"
+            echo -e "Тип: SOCKS5"
+            echo -e "Сервер: [IP-адрес вашего сервера]"
+            echo -e "Порт: $PORT"
+            echo -e "Имя пользователя: $proxy_username"
+            echo -e "Пароль: [ваш пароль]\n"
+        else
+            echo -e "\nUse the following parameters to connect to the proxy:"
+            echo -e "Type: SOCKS5"
+            echo -e "Server: [Your server IP address]"
+            echo -e "Port: $PORT"
+            echo -e "Username: $proxy_username"
+            echo -e "Password: [your password]\n"
+        fi
+    else
+        # Если пользователь отказался, предлагаем ввести учетные данные заново
+        if [ "$LANGUAGE" == "ru" ]; then
+            echo -e "\nСоздание пользователя отменено. Повторный ввод учетных данных...\n"
+        else
+            echo -e "\nUser creation canceled. Re-entering credentials...\n"
+        fi
+        sleep 2
+        manage_user_credentials
+        return
+    fi
 }
 
 # Function to create user management script
@@ -1031,6 +1220,9 @@ function main() {
     echo "====================================================="
     echo
     
+    # Install essential prerequisites right at the beginning
+    install_prerequisites
+    
     # Parse command line arguments if any
     if [[ $# -gt 0 ]]; then
         parse_arguments "$@"
@@ -1038,23 +1230,86 @@ function main() {
     
     # Ask for language preference if not set from command line
     if [[ -z "$LANGUAGE" ]]; then
-        ask_language
+        # Прямой запрос языка в основной функции вместо вызова ask_language
+        echo "Please select your preferred language / Пожалуйста, выберите предпочитаемый язык:"
+        echo "1) English"
+        echo "2) Русский"
+        
+        # Ждем ввод пользователя с бесконечным таймаутом
+        read -r -p "Enter your choice (1/2): " lang_choice
+        
+        case $lang_choice in
+            2)
+                LANGUAGE="ru"
+                echo -e "\nВыбран русский язык"
+                ;;
+            *)
+                LANGUAGE="en"
+                echo -e "\nEnglish language selected"
+                ;;
+        esac
+        
+        # Явная пауза после выбора языка
+        sleep 2
     fi
     export LANGUAGE
+    
+    # Check required dependencies and system information - notice we moved the root check
+    # before asking questions to make sure we have privileges
+    check_dependencies
+    check_system
+    sleep 1 # Пауза между шагами
     
     # Check if running as root
     check_root
     
-    # Check required dependencies
-    check_dependencies
-    sleep 1 # Пауза между шагами
-    
-    # Check system compatibility
-    check_system
-    
     # Ask for action (install or uninstall) if not set from command line
     if [[ -z "$ACTION" ]]; then
-        ask_action
+        # Напрямую запрашиваем действие вместо вызова ask_action
+        local install_en="Install SOCKS5 proxy server"
+        local install_ru="Установить SOCKS5 прокси-сервер"
+        
+        local uninstall_en="Uninstall SOCKS5 proxy server"
+        local uninstall_ru="Удалить SOCKS5 прокси-сервер"
+        
+        local prompt_en="Select an action:"
+        local prompt_ru="Выберите действие:"
+        
+        echo
+        if [ "$LANGUAGE" == "ru" ]; then
+            echo "$prompt_ru"
+            echo "1) $install_ru"
+            echo "2) $uninstall_ru"
+            read -r -p "Введите ваш выбор (1/2): " action_choice
+        else
+            echo "$prompt_en"
+            echo "1) $install_en"
+            echo "2) $uninstall_en"
+            read -r -p "Enter your choice (1/2): " action_choice
+        fi
+        echo
+        
+        case $action_choice in
+            2)
+                ACTION="uninstall"
+                if [ "$LANGUAGE" == "ru" ]; then
+                    echo "Выбрано: Удаление SOCKS5 прокси-сервера"
+                else
+                    echo "Selected: Uninstall SOCKS5 proxy server"
+                fi
+                ;;
+            *)
+                ACTION="install"
+                if [ "$LANGUAGE" == "ru" ]; then
+                    echo "Выбрано: Установка SOCKS5 прокси-сервера"
+                else
+                    echo "Selected: Install SOCKS5 proxy server"
+                fi
+                ;;
+        esac
+        
+        # Пауза после выбора действия
+        sleep 2
     fi
     
     # Добавляем пользователю возможность подтвердить действие перед продолжением
@@ -1076,7 +1331,44 @@ function main() {
         
         # Ask for proxy port if not set from command line
         if [[ -z "$PORT" ]]; then
-            ask_port
+            # Напрямую запрашиваем порт вместо использования функции ask_port
+            local message_en="Enter the port number for the SOCKS5 proxy server [default: $DEFAULT_PORT]:"
+            local message_ru="Введите номер порта для SOCKS5 прокси-сервера [по умолчанию: $DEFAULT_PORT]:"
+            
+            if [ "$LANGUAGE" == "ru" ]; then
+                read -r -p "$message_ru " port_input
+            else
+                read -r -p "$message_en " port_input
+            fi
+            echo
+            
+            if [ -z "$port_input" ]; then
+                PORT=$DEFAULT_PORT
+                if [ "$LANGUAGE" == "ru" ]; then
+                    echo "Используется порт по умолчанию: $PORT"
+                else
+                    echo "Using default port: $PORT"
+                fi
+            else
+                if [[ "$port_input" =~ ^[0-9]+$ ]] && [ "$port_input" -ge 1 ] && [ "$port_input" -le 65535 ]; then
+                    PORT=$port_input
+                    if [ "$LANGUAGE" == "ru" ]; then
+                        echo "Выбран порт: $PORT"
+                    else
+                        echo "Port set to: $PORT"
+                    fi
+                else
+                    if [ "$LANGUAGE" == "ru" ]; then
+                        echo "Неверный номер порта. Используется по умолчанию: $DEFAULT_PORT"
+                    else
+                        echo "Invalid port number. Using default: $DEFAULT_PORT"
+                    fi
+                    PORT=$DEFAULT_PORT
+                fi
+            fi
+            
+            # Пауза после выбора порта
+            sleep 2
         fi
         
         # Validate port
