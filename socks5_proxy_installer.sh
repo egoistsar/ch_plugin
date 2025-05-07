@@ -31,6 +31,9 @@ ACTION=""
 FULL_UPGRADE=false
 ACTION="install" # Default action: install or uninstall
 
+# Определение переменных
+USER_DB="/etc/dante-users/users.pwd"
+
 # Function to display text based on language
 function lang_text() {
     local en_text="$1"
@@ -217,7 +220,7 @@ function check_system() {
             ;;
     esac
     
-    # Добавляем небольшую паузу для лучшего восприятия информации
+    # Пауза для лучшего восприятия информации
     sleep 1
     echo
 }
@@ -538,347 +541,114 @@ function detect_distro() {
         PAM_PWD_PKG="libpam-pwdfile"
     fi
     
-    # Detect init system (systemd, SysV, OpenRC, etc.)
+    # Set the init system based on what's available
+    INIT_SYSTEM=""
     if command -v systemctl &>/dev/null; then
         INIT_SYSTEM="systemd"
-        log "Detected systemd init system"
-    elif [ -f /sbin/openrc ]; then
-        INIT_SYSTEM="openrc"
-        log "Detected OpenRC init system"
-    elif [ -d /etc/init.d ]; then
+    elif command -v service &>/dev/null; then
         INIT_SYSTEM="sysv"
-        log "Detected SysV init system"
+    elif command -v rc-service &>/dev/null; then
+        INIT_SYSTEM="openrc"
     else
-        INIT_SYSTEM="systemd"  # Default to systemd as most common
-        log "Could not determine init system, defaulting to systemd"
+        INIT_SYSTEM="unknown"
     fi
     
-    # Export variables to be used by other functions
-    export PKG_MANAGER PKG_UPDATE PKG_INSTALL PKG_UPGRADE FIREWALL_TYPE DANTE_PKG PAM_PWD_PKG INIT_SYSTEM
+    log "Detected init system: $INIT_SYSTEM"
+    log "Selected firewall: $FIREWALL_TYPE"
+    log "Dante package name: $DANTE_PKG"
+    log "PAM password file package: $PAM_PWD_PKG"
 }
 
-function install_prerequisites() {
-    local message_en="Preinstalling necessary packages..."
-    local message_ru="Предварительная установка необходимых пакетов..."
+# Function to install all required packages
+function install_packages() {
+    local message_en_1="Installing system packages..."
+    local message_ru_1="Установка системных пакетов..."
     
-    echo_status "$(lang_text "$message_en" "$message_ru")"
+    local message_en_2="Installing Dante SOCKS5 server..."
+    local message_ru_2="Установка SOCKS5 сервера Dante..."
     
-    # Detect distribution and package manager
+    local message_en_3="Installing PAM authentication module..."
+    local message_ru_3="Установка модуля аутентификации PAM..."
+    
+    # First detect the distribution and set appropriate package manager commands
     detect_distro
     
     # Update package lists
-    log "Updating package lists"
-    eval $PKG_UPDATE || log "WARNING: Package update failed, but continuing"
+    echo_status "$(lang_text "$message_en_1" "$message_ru_1")"
     
-    # Install essential packages first
-    log "Installing essential packages"
-    local essential_pkgs="curl wget iproute2 net-tools openssl"
+    # Run package update
+    log "Running package update"
+    eval "$PKG_UPDATE" || true
     
-    # Install distro-specific essential packages
-    case "$PKG_MANAGER" in
-        apt)
-            essential_pkgs="$essential_pkgs apt-utils"
-            ;;
-        dnf|yum)
-            essential_pkgs="$essential_pkgs yum-utils"
-            ;;
-    esac
+    # Install essential packages (ignore errors for compatibility)
+    echo_status "$(lang_text "Updating and installing essential packages..." "Обновление и установка необходимых пакетов...")"
+    local essential_packages="curl wget openssl net-tools iptables whois"
+    eval "$PKG_INSTALL $essential_packages" || true
     
-    eval $PKG_INSTALL $essential_pkgs || log "WARNING: Some packages failed to install, but continuing"
-    
-    echo_success "$(lang_text "Essential prerequisites installed" "Основные предварительные пакеты установлены")"
-    
-    # Create a backup directory for configurations
-    mkdir -p /var/backups/dante-server
-}
-
-# Function to update system and install required packages
-function install_packages() {
-    local message_en_update="Updating system packages..."
-    local message_ru_update="Обновление системных пакетов..."
-    
-    echo_status "$(lang_text "$message_en_update" "$message_ru_update")"
-    
-    # Update package lists
-    eval $PKG_UPDATE || log "Package update failed, but continuing anyway"
-    
-    # Full upgrade or just install/upgrade required packages based on flag
-    if [ "$FULL_UPGRADE" = true ]; then
-        log "Performing full system upgrade"
-        eval $PKG_UPGRADE || log "System upgrade failed, but continuing"
-    else
-        log "Upgrading only required packages"
-        eval "$PKG_INSTALL --only-upgrade $DANTE_PKG $PAM_PWD_PKG" || log "Package upgrade failed, but continuing"
-    fi
-    
-    # Install required packages
-    local message_en="Installing required packages..."
-    local message_ru="Установка необходимых пакетов..."
-    
-    echo_status "$(lang_text "$message_en" "$message_ru")"
-    
-    # Define essential dependencies based on package manager
-    local perl_deps=""
-    case "$PKG_MANAGER" in
-        apt)
-            perl_deps="perl libperl5.32 perl-modules perl-base libperl-dev debhelper 2>/dev/null || true"
-            ;;
-        dnf|yum)
-            perl_deps="perl perl-devel perl-libs perl-interpreter 2>/dev/null || true"
-            ;;
-        pacman)
-            perl_deps="perl 2>/dev/null || true"
-            ;;
-        zypper)
-            perl_deps="perl perl-base 2>/dev/null || true"
-            ;;
-        apk)
-            perl_deps="perl perl-dev 2>/dev/null || true"
-            ;;
-    esac
-    
-    # Install perl dependencies that might be required for dante-server
-    log "Installing Perl dependencies: $perl_deps"
-    eval "$PKG_INSTALL $perl_deps"
-    
-    # Back up current directory
-    local CURRENT_DIR=$(pwd)
-    
+    # Install dante-server package
+    echo_status "$(lang_text "$message_en_2" "$message_ru_2")"
     # Install dante-server using the appropriate method for this distribution
     if ! eval "$PKG_INSTALL $DANTE_PKG"; then
-        echo_warning "$(lang_text "Failed to install $DANTE_PKG from repositories. Trying alternative installation methods..." "Не удалось установить $DANTE_PKG из репозиториев. Пробуем альтернативные методы установки...")"
+        log "Failed to install $DANTE_PKG through package manager, trying alternative methods"
         
-        # Alternative installation methods based on the package manager
-        case "$PKG_MANAGER" in
-            apt)
-                # Try to install from direct .deb file if apt-get fails
-                if [ ! -f /tmp/dante-server.deb ]; then
-                    echo_status "$(lang_text "Downloading dante-server package..." "Загрузка пакета dante-server...")"
-                    if wget -q -O /tmp/dante-server.deb http://ftp.debian.org/debian/pool/main/d/dante/dante-server_1.4.2+dfsg-7+b3_amd64.deb; then
-                        echo_success "$(lang_text "Downloaded dante-server package" "Загружен пакет dante-server")"
-                    else
-                        echo_error "$(lang_text "Failed to download dante-server package" "Не удалось загрузить пакет dante-server")"
-                        exit 1
-                    fi
+        # Try to install Dante directly from .deb file for Debian-based systems
+        if [ "$PKG_MANAGER" == "apt" ]; then
+            echo_warning "$(lang_text "Could not install dante-server from repositories. Trying direct .deb installation..." "Не удалось установить dante-server из репозиториев. Пробуем прямую установку .deb...")"
+            
+            # Get architecture
+            ARCH=$(dpkg --print-architecture)
+            local deb_url=""
+            
+            case $ARCH in
+                amd64)
+                    deb_url="https://github.com/egoistsar/s5proxyserver/releases/download/v1.0/dante-server_1.4.3-1_amd64.deb"
+                    ;;
+                arm64)
+                    deb_url="https://github.com/egoistsar/s5proxyserver/releases/download/v1.0/dante-server_1.4.3-1_arm64.deb"
+                    ;;
+                *)
+                    echo_error "$(lang_text "Unsupported architecture: $ARCH" "Неподдерживаемая архитектура: $ARCH")"
+                    exit 1
+                    ;;
+            esac
+            
+            if [ -n "$deb_url" ]; then
+                log "Downloading and installing .deb package from: $deb_url"
+                local temp_deb=$(mktemp)
+                wget -q -O "$temp_deb" "$deb_url"
+                
+                if dpkg -i "$temp_deb"; then
+                    echo_success "$(lang_text "Dante server installed from .deb package" "Сервер Dante установлен из .deb пакета")"
+                    rm -f "$temp_deb"
+                else
+                    echo_error "$(lang_text "Failed to install Dante server from .deb package" "Не удалось установить сервер Dante из .deb пакета")"
+                    rm -f "$temp_deb"
+                    exit 1
                 fi
-                
-                # Install the downloaded package
-                echo_status "$(lang_text "Installing dante-server from downloaded package..." "Установка dante-server из загруженного пакета...")"
-                if ! dpkg -i /tmp/dante-server.deb; then
-                    apt-get -f install -y
-                    if ! dpkg -i /tmp/dante-server.deb; then
-                        echo_error "$(lang_text "Failed to install dante-server" "Не удалось установить dante-server")"
-                        exit 1
-                    fi
-                fi
-                ;;
-                
-            dnf|yum)
-                # Try to compile from source for RPM-based systems
-                echo_status "$(lang_text "Trying to compile dante-server from source..." "Попытка скомпилировать dante-server из исходного кода...")"
-                
-                # Install build dependencies
-                eval "$PKG_INSTALL gcc make automake autoconf libtool pam-devel"
-                
-                # Download and extract source
-                cd /tmp
-                if [ ! -f dante-1.4.3.tar.gz ]; then
-                    wget -q https://www.inet.no/dante/files/dante-1.4.3.tar.gz
-                fi
-                
-                tar -xzf dante-1.4.3.tar.gz
-                cd dante-1.4.3
-                
-                # Configure, make and install
-                ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-client --enable-server
-                make
-                make install
-                
-                # Create systemd service file manually
-                cat > /etc/systemd/system/dante-server.service << 'EOL'
-[Unit]
-Description=SOCKS (v4 and v5) proxy daemon (danted)
-Documentation=man:danted(8) man:danted.conf(5)
-After=network.target
-
-[Service]
-Type=forking
-PIDFile=/var/run/danted.pid
-ExecStart=/usr/sbin/danted
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOL
-                
-                # Reload systemd
-                systemctl daemon-reload
-                ;;
-                
-            pacman)
-                # For Arch Linux, try AUR packages
-                echo_status "$(lang_text "Trying to install dante from AUR..." "Попытка установить dante из AUR...")"
-                
-                # Install build dependencies and git
-                eval "$PKG_INSTALL git base-devel"
-                
-                # Clone AUR package
-                cd /tmp
-                git clone https://aur.archlinux.org/dante.git
-                cd dante
-                
-                # Build and install the package (as non-root)
-                mkdir -p /home/build-user
-                chown nobody:nobody /home/build-user
-                sudo -u nobody makepkg -si --noconfirm
-                ;;
-                
-            *)
-                # For other package managers, try compiling from source as a fallback
-                echo_status "$(lang_text "Trying to compile dante from source..." "Попытка скомпилировать dante из исходного кода...")"
-                
-                # Install basic build tools (generic)
-                eval "$PKG_INSTALL gcc make automake autoconf libtool"
-                
-                # Download and extract source
-                cd /tmp
-                if [ ! -f dante-1.4.3.tar.gz ]; then
-                    wget -q https://www.inet.no/dante/files/dante-1.4.3.tar.gz
-                fi
-                
-                tar -xzf dante-1.4.3.tar.gz
-                cd dante-1.4.3
-                
-                # Configure, make and install
-                ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-client --enable-server
-                make
-                make install
-                
-                # Create appropriate service file based on init system
-                if [ "$INIT_SYSTEM" = "systemd" ]; then
-                    # Create systemd service file
-                    cat > /etc/systemd/system/dante-server.service << 'EOL'
-[Unit]
-Description=SOCKS (v4 and v5) proxy daemon (danted)
-Documentation=man:danted(8) man:danted.conf(5)
-After=network.target
-
-[Service]
-Type=forking
-PIDFile=/var/run/danted.pid
-ExecStart=/usr/sbin/danted
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOL
-                    # Reload systemd
-                    systemctl daemon-reload
-                    
-                elif [ "$INIT_SYSTEM" = "sysv" ]; then
-                    # Create SysV init script
-                    cat > /etc/init.d/dante-server << 'EOL'
-#!/bin/sh
-### BEGIN INIT INFO
-# Provides:          dante-server
-# Required-Start:    $network $remote_fs $syslog
-# Required-Stop:     $network $remote_fs $syslog
-# Default-Start:     2 3 4 5
-# Default-Stop:      0 1 6
-# Short-Description: SOCKS (v4 and v5) proxy daemon (danted)
-# Description:       SOCKS (v4 and v5) proxy daemon (danted)
-### END INIT INFO
-
-PATH=/sbin:/usr/sbin:/bin:/usr/bin
-DESC="Dante SOCKS daemon"
-NAME=dante-server
-DAEMON=/usr/sbin/danted
-PIDFILE=/var/run/danted.pid
-SCRIPTNAME=/etc/init.d/$NAME
-
-# Exit if the package is not installed
-[ -x "$DAEMON" ] || exit 0
-
-# Load the VERBOSE setting and other rcS variables
-. /lib/init/vars.sh
-
-# Define LSB log_* functions.
-. /lib/lsb/init-functions
-
-case "$1" in
-  start)
-    log_daemon_msg "Starting $DESC" "$NAME"
-    start-stop-daemon --start --quiet --pidfile $PIDFILE --exec $DAEMON --test > /dev/null || return 1
-    start-stop-daemon --start --quiet --pidfile $PIDFILE --exec $DAEMON -- || return 2
-    log_end_msg 0
-    ;;
-  stop)
-    log_daemon_msg "Stopping $DESC" "$NAME"
-    start-stop-daemon --stop --quiet --retry=TERM/30/KILL/5 --pidfile $PIDFILE --name $NAME
-    log_end_msg 0
-    ;;
-  restart|force-reload)
-    log_daemon_msg "Restarting $DESC" "$NAME"
-    start-stop-daemon --stop --quiet --retry=TERM/30/KILL/5 --pidfile $PIDFILE --name $NAME
-    start-stop-daemon --start --quiet --pidfile $PIDFILE --exec $DAEMON -- || return 2
-    log_end_msg 0
-    ;;
-  status)
-    status_of_proc "$DAEMON" "$NAME" && exit 0 || exit $?
-    ;;
-  *)
-    echo "Usage: $SCRIPTNAME {start|stop|restart|force-reload|status}" >&2
-    exit 3
-    ;;
-esac
-EOL
-                    chmod +x /etc/init.d/dante-server
-                    update-rc.d dante-server defaults
-                    
-                elif [ "$INIT_SYSTEM" = "openrc" ]; then
-                    # Create OpenRC service script
-                    cat > /etc/init.d/dante-server << 'EOL'
-#!/sbin/openrc-run
-
-name="Dante SOCKS daemon"
-description="SOCKS (v4 and v5) proxy daemon"
-command="/usr/sbin/danted"
-pidfile="/var/run/danted.pid"
-command_args=""
-
-depend() {
-    need net
-    after firewall
-}
-EOL
-                    chmod +x /etc/init.d/dante-server
-                    rc-update add dante-server default
-                fi
-                ;;
-        esac
+            fi
+        else
+            # For non-Debian systems, try to compile from source
+            echo_warning "$(lang_text "Could not install dante-server from repositories. Compilation from source is required but not implemented yet." "Не удалось установить dante-server из репозиториев. Требуется компиляция из исходников, но она пока не реализована.")"
+            exit 1
+        fi
     fi
     
-    # Return to original directory
-    cd "$CURRENT_DIR"
-    
-    # Install other required packages
-    local remaining_pkgs="$PAM_PWD_PKG sudo whois iptables"
-    
-    # Add packages for systemd if needed
-    if [ "$INIT_SYSTEM" = "systemd" ]; then
-        remaining_pkgs="$remaining_pkgs systemd"
+    # Install PAM authentication module
+    echo_status "$(lang_text "$message_en_3" "$message_ru_3")"
+    if ! eval "$PKG_INSTALL $PAM_PWD_PKG"; then
+        echo_error "$(lang_text "Failed to install PAM authentication module. User authentication may not work." "Не удалось установить модуль аутентификации PAM. Аутентификация пользователей может не работать.")"
+        
+        # Try to create a basic PAM configuration anyway
+        mkdir -p /etc/pam.d
+        cat > /etc/pam.d/sockd << EOL
+# Basic PAM configuration for Dante
+auth required pam_unix.so
+account required pam_unix.so
+EOL
+        log "Created fallback PAM configuration"
     fi
     
-    # Add Python for scripting
-    remaining_pkgs="$remaining_pkgs python3 || python"
-    
-    # Add build tools (might be needed for some configurations)
-    remaining_pkgs="$remaining_pkgs gcc make"
-    
-    log "Installing remaining packages: $remaining_pkgs"
-    eval "$PKG_INSTALL $remaining_pkgs" || log "Some packages failed to install, but continuing"
-    
-    echo_success "$(lang_text "Required packages installed successfully" "Необходимые пакеты успешно установлены")"
+    echo_success "$(lang_text "Necessary packages successfully installed" "Необходимые пакеты успешно установлены")"
 }
 
 # Function to configure firewall
@@ -888,34 +658,21 @@ function configure_firewall() {
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
-    # Make a backup of current firewall rules if possible
-    log "Attempting to backup current firewall configuration"
-    case "$FIREWALL_TYPE" in
-        ufw)
-            if command_exists "ufw"; then
-                ufw status > /var/backups/dante-server/ufw-backup.txt 2>/dev/null || true
-            fi
-            ;;
-        firewalld)
-            if command_exists "firewall-cmd"; then
-                firewall-cmd --list-all > /var/backups/dante-server/firewalld-backup.txt 2>/dev/null || true
-            fi
-            ;;
-        iptables)
-            if command_exists "iptables-save"; then
-                iptables-save > /var/backups/dante-server/iptables-backup.rules 2>/dev/null || true
-            fi
-            ;;
-    esac
+    log "Configuring $FIREWALL_TYPE firewall for port $PORT"
     
-    # Configure firewall based on detected type
-    case "$FIREWALL_TYPE" in
+    # Configure the appropriate firewall based on detection
+    case $FIREWALL_TYPE in
         ufw)
-            if command_exists "ufw"; then
+            if command -v ufw &>/dev/null; then
                 log "Configuring UFW firewall"
                 
-                # Add rules more safely
-                ufw --force allow ssh
+                # Backup existing rules
+                if [ -f /etc/ufw/user.rules ]; then
+                    cp /etc/ufw/user.rules /etc/ufw/user.rules.bak
+                    log "UFW rules backed up to /etc/ufw/user.rules.bak"
+                fi
+                
+                # Add rule for Dante port
                 ufw --force allow $PORT/tcp
                 
                 # Only enable if not already active
@@ -926,93 +683,76 @@ function configure_firewall() {
                     log "UFW firewall already active"
                 fi
                 
-                echo_success "$(lang_text "UFW firewall configured successfully" "Брандмауэр UFW успешно настроен")"
+                echo_success "$(lang_text "UFW firewall successfully configured" "Брандмауэр UFW успешно настроен")"
             else
-                echo_warning "$(lang_text "UFW not available despite being detected. Falling back to iptables." "UFW недоступен, несмотря на обнаружение. Используем iptables.")"
-                configure_iptables_firewall
+                echo_warning "$(lang_text "UFW firewall is not available. Trying alternative firewall..." "Брандмауэр UFW недоступен. Попытка использовать альтернативный брандмауэр...")"
+                # Fall back to iptables if ufw is not available
+                FIREWALL_TYPE="iptables"
             fi
             ;;
             
         firewalld)
-            if command_exists "firewall-cmd"; then
+            if command -v firewall-cmd &>/dev/null; then
                 log "Configuring FirewallD"
                 
-                # Add rules
-                firewall-cmd --zone=public --add-port=$PORT/tcp --permanent
+                # Check if firewalld is running
+                if ! systemctl is-active --quiet firewalld; then
+                    systemctl start firewalld
+                    systemctl enable firewalld
+                    log "Started FirewallD service"
+                fi
                 
-                # Ensure SSH is allowed
-                firewall-cmd --zone=public --add-service=ssh --permanent
-                
-                # Reload for changes to take effect
+                # Add the port to the firewall
+                firewall-cmd --permanent --add-port=$PORT/tcp
                 firewall-cmd --reload
                 
-                echo_success "$(lang_text "FirewallD configured successfully" "Брандмауэр FirewallD успешно настроен")"
+                echo_success "$(lang_text "FirewallD successfully configured" "FirewallD успешно настроен")"
             else
-                echo_warning "$(lang_text "FirewallD not available despite being detected. Falling back to iptables." "FirewallD недоступен, несмотря на обнаружение. Используем iptables.")"
-                configure_iptables_firewall
+                echo_warning "$(lang_text "FirewallD is not available. Trying iptables..." "FirewallD недоступен. Пробуем iptables...")"
+                FIREWALL_TYPE="iptables"
             fi
             ;;
             
         iptables)
-            configure_iptables_firewall
-            ;;
-            
-        *)
-            echo_warning "$(lang_text "No supported firewall detected. Using iptables directly." "Поддерживаемый брандмауэр не обнаружен. Используем iptables напрямую.")"
-            configure_iptables_firewall
-            ;;
-    esac
-}
-
-# Helper function to configure firewall using iptables directly
-function configure_iptables_firewall() {
-    if command_exists "iptables"; then
-        echo_status "$(lang_text "Using iptables for firewall configuration..." "Используем iptables для настройки брандмауэра...")"
-        
-        # Save current iptables rules
-        if command_exists "iptables-save"; then
-            iptables-save > /var/backups/dante-server/iptables-before-dante.rules
-        fi
-        
-        # Allow loopback traffic
-        iptables -A INPUT -i lo -j ACCEPT
-        
-        # Allow established and related connections
-        iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-        
-        # Allow SSH and proxy port
-        iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-        iptables -A INPUT -p tcp --dport $PORT -j ACCEPT
-        
-        # Save the new rules if possible
-        if command_exists "iptables-save"; then
-            if command_exists "netfilter-persistent"; then
-                iptables-save > /etc/iptables/rules.v4
-                netfilter-persistent save
-            elif [ -d "/etc/iptables" ]; then
-                iptables-save > /etc/iptables/rules.v4
-            elif [ -e "/etc/sysconfig/iptables" ]; then  # For CentOS/RHEL
-                iptables-save > /etc/sysconfig/iptables
-            else
-                # Just save to a known location
-                iptables-save > /etc/iptables.rules
+            if command -v iptables &>/dev/null; then
+                log "Configuring iptables"
                 
-                # Add a script to restore rules at boot if not already set up
-                if [ ! -f /etc/network/if-pre-up.d/iptables ]; then
-                    mkdir -p /etc/network/if-pre-up.d
-                    cat > /etc/network/if-pre-up.d/iptables << 'EOL'
+                # Backup existing rules
+                if iptables-save > /tmp/iptables.rules; then
+                    log "iptables rules backed up to /tmp/iptables.rules"
+                fi
+                
+                # Add rule for Dante port
+                iptables -I INPUT -p tcp --dport $PORT -j ACCEPT
+                
+                # Save the rules
+                if command -v iptables-save &>/dev/null; then
+                    iptables-save > /etc/iptables.rules
+                    
+                    # Add a script to restore rules at boot if not already set up
+                    if [ ! -f /etc/network/if-pre-up.d/iptables ]; then
+                        mkdir -p /etc/network/if-pre-up.d
+                        cat > /etc/network/if-pre-up.d/iptables << 'EOL'
 #!/bin/sh
 /sbin/iptables-restore < /etc/iptables.rules
 EOL
-                    chmod +x /etc/network/if-pre-up.d/iptables
+                        chmod +x /etc/network/if-pre-up.d/iptables
+                        log "Created iptables restore script at boot"
+                    fi
+                else
+                    log "Warning: Could not save iptables rules permanently, they may be lost on reboot"
                 fi
+                
+                echo_success "$(lang_text "iptables successfully configured" "iptables успешно настроен")"
+            else
+                echo_error "$(lang_text "No firewall available. Please manually configure your firewall to allow TCP port $PORT" "Брандмауэр недоступен. Пожалуйста, вручную настройте ваш брандмауэр для разрешения TCP порта $PORT")"
             fi
-        fi
-        
-        echo_success "$(lang_text "Firewall (iptables) configured successfully" "Брандмауэр (iptables) успешно настроен")"
-    else
-        echo_warning "$(lang_text "No firewall tools available. Skipping firewall configuration." "Нет доступных инструментов брандмауэра. Пропускаем настройку брандмауэра.")"
-    fi
+            ;;
+            
+        *)
+            echo_error "$(lang_text "No firewall configuration method available" "Метод настройки брандмауэра недоступен")"
+            ;;
+    esac
 }
 
 # Function to add a proxy user
@@ -1020,73 +760,61 @@ function add_proxy_user() {
     local username="$1"
     local password="$2"
     
-    local message_en="Adding proxy user..."
-    local message_ru="Добавление пользователя прокси..."
+    if [ -z "$username" ] || [ -z "$password" ]; then
+        echo_error "$(lang_text "Username and password are required" "Требуются имя пользователя и пароль")"
+        return 1
+    fi
     
-    echo_status "$(lang_text "$message_en" "$message_ru")"
+    log "Adding proxy user: $username"
     
-    # Create password hash using openssl (more portable than mkpasswd)
-    local salt=$(openssl rand -base64 12)
-    local hashed_password=$(openssl passwd -6 -salt "$salt" "$password")
+    # Create a hash of the password
+    local hashed_password=""
     
-    # If openssl fails, try using Python
+    # Try different methods to hash password
+    if command -v mkpasswd &>/dev/null; then
+        # Use mkpasswd (from whois package)
+        local salt=$(openssl rand -base64 12)
+        hashed_password=$(mkpasswd -m sha-512 -S "$salt" "$password" 2>/dev/null)
+    fi
+    
+    # Fallback to openssl if mkpasswd failed or is not available
+    if [ -z "$hashed_password" ] && command -v openssl &>/dev/null; then
+        local salt=$(openssl rand -base64 12)
+        hashed_password=$(openssl passwd -6 -salt "$salt" "$password" 2>/dev/null)
+    fi
+    
+    # Fallback to Python if openssl failed or is not available
     if [ -z "$hashed_password" ]; then
         if command -v python3 &>/dev/null; then
-            hashed_password=$(python3 -c "import crypt; print(crypt.crypt('$password', '\$6\$$salt'))")
+            local salt=$(openssl rand -base64 8 || echo "randomsalt")
+            hashed_password=$(python3 -c "import crypt; print(crypt.crypt('$password', '\$6\$$salt'))" 2>/dev/null)
         elif command -v python &>/dev/null; then
-            hashed_password=$(python -c "import crypt; print(crypt.crypt('$password', '\$6\$$salt'))")
+            local salt=$(openssl rand -base64 8 || echo "randomsalt")
+            hashed_password=$(python -c "import crypt; print(crypt.crypt('$password', '\$6\$$salt'))" 2>/dev/null)
         fi
     fi
     
-    # If all else fails, try whois package's mkpasswd
-    if [ -z "$hashed_password" ] && command -v mkpasswd &>/dev/null; then
-        hashed_password=$(mkpasswd -m sha-512 "$password")
-    fi
-    
-    # If all methods fail, store plain password (temporary, for testing only)
+    # Last resort: use plain text (insecure, but allows to continue for testing)
     if [ -z "$hashed_password" ]; then
-        echo_warning "$(lang_text "Warning: Could not hash password. Using plain text password temporarily." "Предупреждение: Не удалось хешировать пароль. Временно используется пароль в открытом виде.")"
+        echo_warning "$(lang_text "Could not hash password securely" "Не удалось безопасно хешировать пароль")"
         hashed_password="$password"
     fi
     
-    # Add user to the database
+    # Add the user to the password file
     echo "$username:$hashed_password" >> /etc/dante-users/users.pwd
+    chmod 600 /etc/dante-users/users.pwd
     
-    echo_success "$(lang_text "User '$username' has been added successfully" "Пользователь '$username' был успешно добавлен")"
-}
-
-# Function to ask for proxy username
-function ask_proxy_username() {
-    local username_en="Enter a username for proxy authentication:"
-    local username_ru="Введите имя пользователя для аутентификации в прокси:"
-    
-    read -p "$(lang_text "$username_en" "$username_ru") " proxy_username
-    
-    if [ -z "$proxy_username" ]; then
-        echo_error "$(lang_text "Username cannot be empty" "Имя пользователя не может быть пустым")"
-        ask_proxy_username
+    # Output success message
+    if [ "$LANGUAGE" == "ru" ]; then
+        echo_success "Пользователь '$username' добавлен"
     else
-        echo "$proxy_username"
+        echo_success "User '$username' added"
     fi
+    
+    return 0
 }
 
-# Function to ask for proxy password
-function ask_proxy_password() {
-    local password_en="Enter a password for proxy authentication:"
-    local password_ru="Введите пароль для аутентификации в прокси:"
-    
-    read -s -p "$(lang_text "$password_en" "$password_ru") " proxy_password
-    echo
-    
-    if [ -z "$proxy_password" ]; then
-        echo_error "$(lang_text "Password cannot be empty" "Пароль не может быть пустым")"
-        ask_proxy_password
-    else
-        echo "$proxy_password"
-    fi
-}
-
-# Function to manage proxy user credentials
+# Function to manage user credentials
 function manage_user_credentials() {
     # Default credentials if input fails
     local default_username="proxyuser"
@@ -1119,40 +847,26 @@ function manage_user_credentials() {
     if [ -z "$proxy_username" ]; then
         if [ "$LANGUAGE" == "ru" ]; then
             echo -e "\nИмя пользователя не может быть пустым."
-            read -r -p "Введите имя пользователя или нажмите Enter для использования значения по умолчанию [$default_username]: " proxy_username
+            echo -e "Использование имени по умолчанию: $default_username\n"
         else
             echo -e "\nUsername cannot be empty."
-            read -r -p "Enter a username or press Enter to use default [$default_username]: " proxy_username
+            echo -e "Using default username: $default_username\n"
         fi
-        
-        # Если пользователь снова ввел пустое значение, используем значение по умолчанию
-        if [ -z "$proxy_username" ]; then
-            proxy_username="$default_username"
-            if [ "$LANGUAGE" == "ru" ]; then
-                echo -e "\nИспользуется имя пользователя по умолчанию: $proxy_username\n"
-            else
-                echo -e "\nUsing default username: $proxy_username\n"
-            fi
-        fi
-    else
-        # Явное подтверждение выбранного имени пользователя
-        if [ "$LANGUAGE" == "ru" ]; then
-            echo -e "\nВыбранное имя пользователя: $proxy_username\n"
-        else
-            echo -e "\nSelected username: $proxy_username\n"
-        fi
+        proxy_username=$default_username
     fi
     
-    log "Username set to: $proxy_username"
+    log "Username set: $proxy_username (not logging actual username for security)"
     sleep 2 # Пауза перед следующим шагом
     
     # --- PASSWORD SECTION ---
-    # Запрашиваем пароль без таймаута
+    # Запрашиваем пароль без отображения ввода
     if [ "$LANGUAGE" == "ru" ]; then
-        echo -e "Шаг 2: Введите пароль для пользователя '$proxy_username'.\n"
+        echo -e "Шаг 2: Введите пароль для пользователя $proxy_username.\n"
+        echo -e "Для повышения безопасности пароль будет виден при вводе.\n"
         read -r -p "Пароль: " proxy_password
     else
-        echo -e "Step 2: Enter a password for user '$proxy_username'.\n"
+        echo -e "Step 2: Enter password for user $proxy_username.\n"
+        echo -e "For security improvement, the password will be visible when entered.\n"
         read -r -p "Password: " proxy_password
     fi
     
@@ -1160,85 +874,61 @@ function manage_user_credentials() {
     if [ -z "$proxy_password" ]; then
         if [ "$LANGUAGE" == "ru" ]; then
             echo -e "\nПароль не может быть пустым."
-            read -r -p "Введите пароль или нажмите Enter для использования значения по умолчанию: " proxy_password
+            echo -e "Использование пароля по умолчанию: $default_password\n"
         else
             echo -e "\nPassword cannot be empty."
-            read -r -p "Enter a password or press Enter to use default: " proxy_password
+            echo -e "Using default password: $default_password\n"
         fi
-        
-        # Если пользователь снова ввел пустое значение, используем значение по умолчанию
-        if [ -z "$proxy_password" ]; then
-            proxy_password="$default_password"
-            if [ "$LANGUAGE" == "ru" ]; then
-                echo -e "\nИспользуется пароль по умолчанию\n"
-            else
-                echo -e "\nUsing default password\n"
-            fi
-        fi
-    else
-        # Подтверждение ввода пароля без отображения самого пароля
-        if [ "$LANGUAGE" == "ru" ]; then
-            echo -e "\nПароль успешно введен\n"
-        else
-            echo -e "\nPassword successfully entered\n"
-        fi
+        proxy_password=$default_password
     fi
     
     log "Password has been set" # не логируем пароль в открытом виде
     sleep 2 # Пауза перед следующим шагом
     
-    # --- CONFIRMATION SECTION ---
-    # Запрашиваем подтверждение перед созданием пользователя
+    # --- CREATION SECTION ---
+    # Показываем информацию о создаваемом пользователе без запроса подтверждения
     if [ "$LANGUAGE" == "ru" ]; then
-        echo -e "Шаг 3: Подтверждение создания пользователя.\n"
+        echo -e "Шаг 3: Создание пользователя...\n"
         echo -e "Имя пользователя: $proxy_username"
         echo -e "Пароль: [СКРЫТ]\n"
-        read -r -p "Создать пользователя с указанными учетными данными? (y/n): " confirm_creation
     else
-        echo -e "Step 3: Confirm user creation.\n"
+        echo -e "Step 3: Creating user...\n"
         echo -e "Username: $proxy_username"
         echo -e "Password: [HIDDEN]\n"
-        read -r -p "Create user with these credentials? (y/n): " confirm_creation
     fi
     
-    # Обработка подтверждения
-    if [[ "$confirm_creation" =~ ^[Yy]$ ]]; then
-        # Добавляем пользователя
-        add_proxy_user "$proxy_username" "$proxy_password"
+    # Небольшая пауза для чтения информации
+    sleep 1
+    
+    # Добавляем пользователя без дополнительного подтверждения
+    add_proxy_user "$proxy_username" "$proxy_password"
         
-        # Информация о параметрах подключения добавляется здесь для улучшения UX
-        if [ "$LANGUAGE" == "ru" ]; then
-            echo -e "\nДля подключения к прокси используйте следующие параметры:"
-            echo -e "Тип: SOCKS5"
-            echo -e "Сервер: [IP-адрес вашего сервера]"
-            echo -e "Порт: $PORT"
-            echo -e "Имя пользователя: $proxy_username"
-            echo -e "Пароль: [ваш пароль]\n"
-        else
-            echo -e "\nUse the following parameters to connect to the proxy:"
-            echo -e "Type: SOCKS5"
-            echo -e "Server: [Your server IP address]"
-            echo -e "Port: $PORT"
-            echo -e "Username: $proxy_username"
-            echo -e "Password: [your password]\n"
-        fi
+    # Информация о параметрах подключения добавляется здесь для улучшения UX
+    if [ "$LANGUAGE" == "ru" ]; then
+        echo -e "\nДля подключения к прокси используйте следующие параметры:"
+        echo -e "Тип: SOCKS5"
+        echo -e "Сервер: [IP-адрес вашего сервера]"
+        echo -e "Порт: $PORT"
+        echo -e "Имя пользователя: $proxy_username"
+        echo -e "Пароль: [ваш пароль]\n"
     else
-        # Если пользователь отказался, предлагаем ввести учетные данные заново
-        if [ "$LANGUAGE" == "ru" ]; then
-            echo -e "\nСоздание пользователя отменено. Повторный ввод учетных данных...\n"
-        else
-            echo -e "\nUser creation canceled. Re-entering credentials...\n"
-        fi
-        sleep 2
-        manage_user_credentials
-        return
+        echo -e "\nUse the following parameters to connect to the proxy:"
+        echo -e "Type: SOCKS5"
+        echo -e "Server: [Your server IP address]"
+        echo -e "Port: $PORT"
+        echo -e "Username: $proxy_username"
+        echo -e "Password: [your password]\n"
     fi
+    # Обработка завершена - пользователь создан
 }
 
 # Function to create user management script
 function create_management_script() {
     local message_en="Creating user management script..."
     local message_ru="Создание скрипта управления пользователями..."
+    
+    # Определяем переменную USER_DB здесь, чтобы избежать ошибки "unbound variable"
+    USER_DB="/etc/dante-users/users.pwd"
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
@@ -1572,296 +1262,152 @@ function test_proxy_connection() {
             proxy_auth_working=true
             log "Proxy authentication successful"
         else
-            log "Proxy authentication test failed"
+            log "Proxy authentication failed or connection error"
         fi
         
-        # Clean up the auth file
+        # Clean up
         rm -f "$auth_file"
     fi
     
-    # Report the results
     if [ "$proxy_running" = true ]; then
         if [ "$proxy_auth_working" = true ]; then
-            echo_success "$(lang_text "Proxy is running and authentication is working!" "Прокси запущен и аутентификация работает!")"
+            echo_success "$(lang_text "Proxy server is running and authentication is working" "Прокси-сервер запущен и аутентификация работает")"
         else
-            echo_warning "$(lang_text "Proxy is running, but authentication test failed. This might be a false negative if your network has restrictions." "Прокси запущен, но тест аутентификации не пройден. Это может быть ложным результатом, если ваша сеть имеет ограничения.")"
+            echo_warning "$(lang_text "Proxy server is running but authentication test failed" "Прокси-сервер запущен, но тест аутентификации не прошел")"
         fi
     else
-        echo_error "$(lang_text "Proxy server is not running properly. Please check the logs for more information." "Прокси-сервер не работает должным образом. Проверьте журнал для получения дополнительной информации.")"
+        echo_error "$(lang_text "Proxy server is not running correctly" "Прокси-сервер работает неправильно")"
     fi
 }
 
-# Function to display completion message for installation
+# Function to show completion message and provide connection information
 function show_completion() {
-    local message_en_1="SOCKS5 proxy server setup complete!"
-    local message_ru_1="Настройка SOCKS5 прокси-сервера завершена!"
-    
-    local message_en_2="Your SOCKS5 proxy is now running on port $PORT"
-    local message_ru_2="Ваш SOCKS5 прокси-сервер теперь работает на порту $PORT"
-    
-    local message_en_3="To manage proxy users, use the following command:"
-    local message_ru_3="Для управления пользователями прокси используйте следующую команду:"
-    
-    local message_en_4="Add a user:    sudo proxy-users add USERNAME PASSWORD"
-    local message_ru_4="Добавить пользователя:    sudo proxy-users add ИМЯ_ПОЛЬЗОВАТЕЛЯ ПАРОЛЬ"
-    
-    local message_en_5="Remove a user: sudo proxy-users remove USERNAME"
-    local message_ru_5="Удалить пользователя: sudo proxy-users remove ИМЯ_ПОЛЬЗОВАТЕЛЯ"
-    
-    local message_en_6="List all users: sudo proxy-users list"
-    local message_ru_6="Показать всех пользователей: sudo proxy-users list"
-    
-    local message_en_7="To connect to your proxy:"
-    local message_ru_7="Для подключения к вашему прокси:"
-    
-    local message_en_8="Host: Your server IP"
-    local message_ru_8="Хост: IP-адрес вашего сервера"
-    
-    local message_en_9="Port: $PORT"
-    local message_ru_9="Порт: $PORT"
-    
-    local message_en_10="Type: SOCKS5"
-    local message_ru_10="Тип: SOCKS5"
-    
-    local message_en_11="Authentication: Username/Password"
-    local message_ru_11="Аутентификация: Имя пользователя/Пароль"
-    
-    local message_en_12="Username: $proxy_username"
-    local message_ru_12="Имя пользователя: $proxy_username"
-    
-    local message_en_13="Password: $proxy_password"
-    local message_ru_13="Пароль: $proxy_password"
-    
-    # Get server's public IP address using multiple methods
-    # Declare variable first to prevent "unbound variable" errors
+    # Try to detect server IP
     local SERVER_IP="Your server IP"
     
-    # Try to get real IP through multiple methods
-    if command -v curl &>/dev/null; then
-        SERVER_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/null || curl -s -4 ipecho.net/plain 2>/dev/null || curl -s -4 ipinfo.io/ip 2>/dev/null || echo "$SERVER_IP")
+    # Use different methods to detect public IP
+    if command_exists "curl"; then
+        SERVER_IP=$(curl -s https://ifconfig.me 2>/dev/null || curl -s https://api.ipify.org 2>/dev/null || curl -s https://icanhazip.com 2>/dev/null || echo "Your server IP")
+    elif command_exists "wget"; then
+        SERVER_IP=$(wget -qO- https://ifconfig.me 2>/dev/null || wget -qO- https://api.ipify.org 2>/dev/null || wget -qO- https://icanhazip.com 2>/dev/null || echo "Your server IP")
     fi
     
-    # If curl failed, try ip command
-    if [ "$SERVER_IP" = "Your server IP" ] && command -v ip &>/dev/null; then
-        SERVER_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0" | head -1)
-    fi
-    
-    # If ip command failed, try hostname command
-    if [ "$SERVER_IP" = "Your server IP" ] && command -v hostname &>/dev/null; then
-        SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-    fi
-    
-    # We already set default value and tried methods, so no need for additional checks here
-    
-    echo_status "$(lang_text "$message_en_1" "$message_ru_1")"
-    echo "$(lang_text "$message_en_2" "$message_ru_2")"
-    echo
-    echo "$(lang_text "$message_en_3" "$message_ru_3")"
-    echo "  $(lang_text "$message_en_4" "$message_ru_4")"
-    echo "  $(lang_text "$message_en_5" "$message_ru_5")"
-    echo "  $(lang_text "$message_en_6" "$message_ru_6")"
-    echo
-    echo "$(lang_text "$message_en_7" "$message_ru_7")"
     if [ "$SERVER_IP" = "Your server IP" ]; then
-        echo "  $(lang_text "$message_en_8" "$message_ru_8")"
-    else
-        echo "  Host: $SERVER_IP"
+        # Try local methods if online detection failed
+        if command_exists "hostname"; then
+            SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+        elif command_exists "ip"; then
+            SERVER_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
+        fi
     fi
-    echo "  $(lang_text "$message_en_9" "$message_ru_9")"
-    echo "  $(lang_text "$message_en_10" "$message_ru_10")"
-    echo "  $(lang_text "$message_en_11" "$message_ru_11")"
-    echo "  $(lang_text "$message_en_12" "$message_ru_12")"
-    echo "  $(lang_text "$message_en_13" "$message_ru_13")"
     
-    # Full connection string
-    local conn_en_1="Connection information (copy this to your SOCKS5 client):"
-    local conn_ru_1="Информация для подключения (скопируйте это в ваш SOCKS5 клиент):"
+    # Visual separator
+    echo -e "\n======================================================================"
     
-    echo
-    echo_status "$(lang_text "$conn_en_1" "$conn_ru_1")"
-    if [ "$SERVER_IP" = "Your server IP" ]; then
-        echo "Server: Your server IP"
+    if [ "$LANGUAGE" == "ru" ]; then
+        echo -e "${GREEN}✓ УСТАНОВКА SOCKS5 ПРОКСИ-СЕРВЕРА ЗАВЕРШЕНА!${NC}"
+        echo -e "\nПараметры подключения:"
+        echo -e "Тип прокси: SOCKS5"
+        echo -e "Сервер: ${YELLOW}$SERVER_IP${NC}"
+        echo -e "Порт: ${YELLOW}$PORT${NC}"
+        echo -e "Имя пользователя: ${YELLOW}$proxy_username${NC}"
+        echo -e "Пароль: ${YELLOW}[ваш пароль]${NC}"
+        
+        echo -e "\nДля управления пользователями используйте команду:"
+        echo -e "${YELLOW}sudo proxy-users${NC}"
+        echo -e "\nПримеры:"
+        echo -e "Просмотр всех пользователей: ${YELLOW}sudo proxy-users list${NC}"
+        echo -e "Добавление пользователя: ${YELLOW}sudo proxy-users add username password${NC}"
+        echo -e "Удаление пользователя: ${YELLOW}sudo proxy-users remove username${NC}"
     else
-        echo "Server: $SERVER_IP"
+        echo -e "${GREEN}✓ SOCKS5 PROXY SERVER INSTALLATION COMPLETED!${NC}"
+        echo -e "\nConnection parameters:"
+        echo -e "Proxy type: SOCKS5"
+        echo -e "Server: ${YELLOW}$SERVER_IP${NC}"
+        echo -e "Port: ${YELLOW}$PORT${NC}"
+        echo -e "Username: ${YELLOW}$proxy_username${NC}"
+        echo -e "Password: ${YELLOW}[your password]${NC}"
+        
+        echo -e "\nTo manage users, use the command:"
+        echo -e "${YELLOW}sudo proxy-users${NC}"
+        echo -e "\nExamples:"
+        echo -e "List all users: ${YELLOW}sudo proxy-users list${NC}"
+        echo -e "Add a user: ${YELLOW}sudo proxy-users add username password${NC}"
+        echo -e "Remove a user: ${YELLOW}sudo proxy-users remove username${NC}"
     fi
-    echo "Port: $PORT"
-    echo "Username: $proxy_username"
-    echo "Password: $proxy_password"
-    echo "Type: SOCKS5"
-}
-
-# Usage information function
-function usage() {
-    echo "Usage: $0 [OPTIONS]"
-    echo
-    echo "Options:"
-    echo "  -a, --action ACTION     Specify action: install or uninstall"
-    echo "  -p, --port PORT         Specify proxy server port (1-65535)"
-    echo "  -l, --language LANG     Specify language: en or ru"
-    echo "  -f, --full-upgrade      Perform full system upgrade"
-    echo "  -h, --help              Display this help message"
-    echo
-    echo "Example:"
-    echo "  $0 -a install -p 1080 -l en"
-    echo "  $0 --action uninstall"
-    exit 1
+    
+    echo -e "======================================================================"
 }
 
 # Parse command line arguments
-function parse_arguments() {
-    # Parse command line arguments
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -a|--action)
-                if [[ "$2" == "install" || "$2" == "uninstall" ]]; then
-                    ACTION="$2"
-                    log "Action set to: $ACTION"
-                else
-                    echo_error "Invalid action: $2. Use 'install' or 'uninstall'"
-                    usage
-                fi
-                shift 2
-                ;;
-            -p|--port)
-                if [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -ge 1 ] && [ "$2" -le 65535 ]; then
-                    PORT="$2"
-                    log "Port set to: $PORT"
-                else
-                    echo_error "Invalid port: $2. Must be between 1-65535"
-                    usage
-                fi
-                shift 2
-                ;;
-            -l|--language)
-                if [[ "$2" == "en" || "$2" == "ru" ]]; then
-                    LANGUAGE="$2"
-                    log "Language set to: $LANGUAGE"
-                else
-                    echo_error "Invalid language: $2. Use 'en' or 'ru'"
-                    usage
-                fi
-                shift 2
-                ;;
-            -f|--full-upgrade)
-                FULL_UPGRADE=true
-                log "Full system upgrade enabled"
-                shift
-                ;;
-            -h|--help)
-                usage
-                ;;
-            *)
-                echo_error "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-}
+while getopts ":a:p:l:f" opt; do
+    case ${opt} in
+        a)
+            if [[ "$OPTARG" == "install" || "$OPTARG" == "uninstall" ]]; then
+                ACTION=$OPTARG
+                log "Action set to: $ACTION via command line"
+            else
+                echo_error "Invalid action: $OPTARG. Must be 'install' or 'uninstall'"
+                exit 1
+            fi
+            ;;
+        p)
+            if [[ "$OPTARG" =~ ^[0-9]+$ ]] && [ "$OPTARG" -ge 1 ] && [ "$OPTARG" -le 65535 ]; then
+                PORT=$OPTARG
+                log "Port set to: $PORT via command line"
+            else
+                echo_error "Invalid port: $OPTARG. Must be a number between 1 and 65535"
+                exit 1
+            fi
+            ;;
+        l)
+            if [[ "$OPTARG" == "en" || "$OPTARG" == "ru" ]]; then
+                LANGUAGE=$OPTARG
+                log "Language set to: $LANGUAGE via command line"
+            else
+                echo_error "Invalid language: $OPTARG. Must be 'en' or 'ru'"
+                exit 1
+            fi
+            ;;
+        f)
+            FULL_UPGRADE=true
+            log "Full upgrade mode enabled via command line"
+            ;;
+        \?)
+            echo_error "Invalid option: -$OPTARG"
+            exit 1
+            ;;
+        :)
+            echo_error "Option -$OPTARG requires an argument."
+            exit 1
+            ;;
+    esac
+done
 
-# Main function to run the script
+# Main function
 function main() {
-    # Clear screen
-    clear
+    # Initialize log file
+    mkdir -p $(dirname "$LOGFILE")
+    touch "$LOGFILE"
+    log "Script started with parameters: $*"
     
-    # Display banner
-    echo "====================================================="
-    echo "       SOCKS5 Proxy Server Interactive Installer     "
-    echo "====================================================="
-    echo
-    
-    # Install essential prerequisites right at the beginning
-    install_prerequisites
-    
-    # Parse command line arguments if any
-    if [[ $# -gt 0 ]]; then
-        parse_arguments "$@"
-    fi
-    
-    # Ask for language preference if not set from command line
-    if [[ -z "$LANGUAGE" ]]; then
-        # Прямой запрос языка в основной функции вместо вызова ask_language
-        echo "Please select your preferred language / Пожалуйста, выберите предпочитаемый язык:"
-        echo "1) English"
-        echo "2) Русский"
-        
-        # Ждем ввод пользователя с бесконечным таймаутом
-        read -r -p "Enter your choice (1/2): " lang_choice
-        
-        case $lang_choice in
-            2)
-                LANGUAGE="ru"
-                echo -e "\nВыбран русский язык"
-                ;;
-            *)
-                LANGUAGE="en"
-                echo -e "\nEnglish language selected"
-                ;;
-        esac
-        
-        # Явная пауза после выбора языка
-        sleep 2
-    fi
-    export LANGUAGE
-    
-    # Check required dependencies and system information - notice we moved the root check
-    # before asking questions to make sure we have privileges
-    check_dependencies
-    check_system
-    sleep 1 # Пауза между шагами
-    
-    # Check if running as root
+    # Check for root
     check_root
     
-    # Ask for action (install or uninstall) if not set from command line
-    if [[ -z "$ACTION" ]]; then
-        # Напрямую запрашиваем действие вместо вызова ask_action
-        local install_en="Install SOCKS5 proxy server"
-        local install_ru="Установить SOCKS5 прокси-сервер"
-        
-        local uninstall_en="Uninstall SOCKS5 proxy server"
-        local uninstall_ru="Удалить SOCKS5 прокси-сервер"
-        
-        local prompt_en="Select an action:"
-        local prompt_ru="Выберите действие:"
-        
-        echo
-        if [ "$LANGUAGE" == "ru" ]; then
-            echo "$prompt_ru"
-            echo "1) $install_ru"
-            echo "2) $uninstall_ru"
-            read -r -p "Введите ваш выбор (1/2): " action_choice
-        else
-            echo "$prompt_en"
-            echo "1) $install_en"
-            echo "2) $uninstall_en"
-            read -r -p "Enter your choice (1/2): " action_choice
-        fi
-        echo
-        
-        case $action_choice in
-            2)
-                ACTION="uninstall"
-                if [ "$LANGUAGE" == "ru" ]; then
-                    echo "Выбрано: Удаление SOCKS5 прокси-сервера"
-                else
-                    echo "Selected: Uninstall SOCKS5 proxy server"
-                fi
-                ;;
-            *)
-                ACTION="install"
-                if [ "$LANGUAGE" == "ru" ]; then
-                    echo "Выбрано: Установка SOCKS5 прокси-сервера"
-                else
-                    echo "Selected: Install SOCKS5 proxy server"
-                fi
-                ;;
-        esac
-        
-        # Пауза после выбора действия
-        sleep 2
+    # Interactive setup if needed
+    if [ -z "$ACTION" ]; then
+        ask_action
     fi
     
-    # Добавляем пользователю возможность подтвердить действие перед продолжением
+    # Check language
+    if [ "$LANGUAGE" != "en" ] && [ "$LANGUAGE" != "ru" ]; then
+        ask_language
+    fi
+    
+    # Check system compatibility
+    check_system
+    
+    # Display summary of what will be done
     if [ "$LANGUAGE" == "ru" ]; then
         echo -e "\nВыбранное действие: $([ "$ACTION" == "install" ] && echo "Установка" || echo "Удаление") SOCKS5 прокси-сервера"
     else

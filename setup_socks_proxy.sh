@@ -1,183 +1,144 @@
 #!/bin/bash
 
-# This is a wrapper script that will execute the SOCKS5 Proxy Server installer
-# It includes improved progress indication, error handling, and user interaction
+# Socks5 Proxy Server Interactive Installer - Setup Script
+# ----------------------------------------------------------------------------------
+# Author: egoistsar
+# Usage: bash setup_socks_proxy.sh
+# Requirements: Internet access, root privileges
+# ----------------------------------------------------------------------------------
 
-# Ensure script is run in interactive mode
-if [ ! -t 0 ]; then
-    echo "This script must be run in interactive mode. Please download and run it directly."
-    echo "Use these commands:"
-    echo "wget https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh"
-    echo "chmod +x setup_socks_proxy.sh"
-    echo "sudo ./setup_socks_proxy.sh"
-    exit 1
-fi
-
-# Ensure stdin is a terminal
-exec < /dev/tty
-
-# Color codes for output
+# Colors for pretty output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-# Function to print colored status messages
+# Function to display status messages
 print_status() {
     echo -e "\n${BLUE}>> $1${NC}"
 }
 
+# Function to display success messages
 print_success() {
-    echo -e "\n${GREEN}✓ $1${NC}"
+    echo -e "${GREEN}✓ $1${NC}"
 }
 
+# Function to display error messages
 print_error() {
-    echo -e "\n${RED}✗ $1${NC}"
+    echo -e "${RED}✗ $1${NC}"
 }
 
+# Function to display warning messages
 print_warning() {
-    echo -e "\n${YELLOW}! $1${NC}"
+    echo -e "${YELLOW}! $1${NC}"
 }
 
-# Function to display animated progress
-show_progress() {
-    local duration=$1
-    local message=$2
-    local chars="⣾⣽⣻⢿⡿⣟⣯⣷"
-    local end=$((SECONDS + duration))
-    
-    echo -en "\n${BLUE}>> $message${NC} "
-    
-    while [ $SECONDS -lt $end ]; do
-        for (( i=0; i<${#chars}; i++ )); do
-            echo -en "\b${chars:$i:1}"
-            sleep 0.1
-        done
-    done
-    
-    echo -e "\b ${GREEN}✓${NC}"
-}
-
-# Function to handle errors and clean up
-handle_error() {
-    print_error "An error occurred during the installation"
-    print_status "Cleaning up temporary files..."
-    rm -f socks5_proxy_installer.sh 2>/dev/null
-    exit 1
-}
-
-# Set trap for error handling
-trap handle_error ERR
-
-# Clear screen
-clear
-
-# Display ASCII art banner with colorful output
-echo -e "${CYAN}"
-cat << "EOF"
- ____   ___   ____ _  _____ _____ 
-/ ___| / _ \ / ___| |/ / / / ____|
-\___ \| | | | |   | ' / | | |     
- ___) | |_| | |___| . \ | | |____ 
-|____/ \___/ \____|_|\_\ | \_____|
-                        |_|       
- ____                          ____                            
-|  _ \ _ __ _____  ___   _    / ___|  ___ _ ____   _____ _ __ 
-| |_) | '__/ _ \ \/ / | | |   \___ \ / _ \ '__\ \ / / _ \ '__|
-|  __/| | | (_) >  <| |_| |    ___) |  __/ |   \ V /  __/ |   
-|_|   |_|  \___/_/\_\\__, |   |____/ \___|_|    \_/ \___|_|   
-                     |___/                                     
-EOF
-echo -e "${NC}"
-
-echo -e "\n${BOLD}SOCKS5 Proxy Server Interactive Installer${NC}\n"
-
-# Check if running as root
+# Check if script is running as root
 if [ "$(id -u)" -ne 0 ]; then
     print_error "This script must be run as root"
-    echo -e "\nPlease run this script with root privileges. For example:"
-    echo -e "  ${CYAN}sudo bash setup_socks_proxy.sh${NC}"
-    echo
+    echo -e "Please run this script with root privileges. For example:"
+    echo -e "  sudo bash setup_socks_proxy.sh"
     exit 1
 fi
 
-# Ask user for language preference
-echo -e "${YELLOW}Please select your preferred language / Пожалуйста, выберите предпочитаемый язык:${NC}"
-echo "1) English"
-echo "2) Русский"
+# ASCII art banner
+echo -e "============================================================="
+echo -e " ____   ___   ____ _  _____ _____ "
+echo -e "/ ___| / _ \ / ___| |/ / / / ____|"
+echo -e "\___ \| | | | |   | ' / | | |     "
+echo -e " ___) | |_| | |___| . \ | | |____ "
+echo -e "|____/ \___/ \____|_|\_\ | \_____|"
+echo -e "                        |_|       "
+echo -e " ____                          ____                            "
+echo -e "|  _ \ _ __ _____  ___   _    / ___|  ___ _ ____   _____ _ __ "
+echo -e "| |_) | '__/ _ \ \/ / | | |   \___ \ / _ \ '__\ \ / / _ \ '__|"
+echo -e "|  __/| | | (_) >  <| |_| |    ___) |  __/ |   \ V /  __/ |   "
+echo -e "|_|   |_|  \___/_/\_\\__, |   |____/ \___|_|    \_/ \___|_|   "
+echo -e "                     |___/                                     "
+echo -e "SOCKS5 Proxy Server Interactive Installer"
+echo -e "============================================================="
 
+# Ask for language preference
+print_status "Welcome to SOCKS5 Proxy Installer"
+echo -e "Please select your preferred language / Пожалуйста, выберите предпочитаемый язык:"
+echo -e "1) English"
+echo -e "2) Русский"
+
+# Read language choice with timeout
 read -r -p "Enter your choice (1/2): " lang_choice
-echo
 
-LANG_PARAM=""
-case $lang_choice in
-    2)
-        LANG_PARAM="-l ru"
-        print_success "Выбран русский язык"
-        ;;
-    *)
-        LANG_PARAM="-l en"
-        print_success "English language selected"
-        ;;
-esac
-
-# Ask for operation type
+# Set language parameter
 if [ "$lang_choice" == "2" ]; then
-    echo -e "\n${YELLOW}Выберите действие:${NC}"
-    echo "1) Установить SOCKS5 прокси-сервер"
-    echo "2) Удалить SOCKS5 прокси-сервер"
-    
+    LANG_PARAM="-l ru"
+    echo -e "Выбран русский язык"
+else
+    LANG_PARAM="-l en"
+    echo -e "English language selected"
+fi
+
+# Ask for action (install or uninstall)
+if [ "$lang_choice" == "2" ]; then
+    echo -e "\nВыберите действие:"
+    echo -e "1) Установить SOCKS5 прокси-сервер"
+    echo -e "2) Удалить SOCKS5 прокси-сервер"
     read -r -p "Введите ваш выбор (1/2): " action_choice
 else
-    echo -e "\n${YELLOW}Select operation:${NC}"
-    echo "1) Install SOCKS5 proxy server"
-    echo "2) Uninstall SOCKS5 proxy server"
-    
+    echo -e "\nSelect an action:"
+    echo -e "1) Install SOCKS5 proxy server"
+    echo -e "2) Uninstall SOCKS5 proxy server"
     read -r -p "Enter your choice (1/2): " action_choice
 fi
-echo
 
-ACTION_PARAM=""
-case $action_choice in
-    2)
-        ACTION_PARAM="-a uninstall"
-        if [ "$lang_choice" == "2" ]; then
-            print_success "Выбрано: Удаление SOCKS5 прокси-сервера"
-        else
-            print_success "Selected: Uninstall SOCKS5 proxy server"
-        fi
-        ;;
-    *)
-        ACTION_PARAM="-a install"
-        if [ "$lang_choice" == "2" ]; then
-            print_success "Выбрано: Установка SOCKS5 прокси-сервера"
-        else
-            print_success "Selected: Install SOCKS5 proxy server"
-        fi
-        ;;
-esac
-
-# Ask for port if installing
-PORT_PARAM=""
-if [ "$action_choice" != "2" ]; then
+# Set action parameter
+if [ "$action_choice" == "2" ]; then
+    ACTION_PARAM="-a uninstall"
     if [ "$lang_choice" == "2" ]; then
-        read -r -p "Введите номер порта для SOCKS5 прокси-сервера [1080]: " port_choice
+        print_success "Выбрано: Удаление SOCKS5 прокси-сервера"
     else
-        read -r -p "Enter port number for SOCKS5 proxy server [1080]: " port_choice
+        print_success "Selected: Uninstall SOCKS5 proxy server"
+    fi
+    PORT_PARAM="" # Port is not needed for uninstall
+else
+    ACTION_PARAM="-a install"
+    if [ "$lang_choice" == "2" ]; then
+        print_success "Выбрано: Установка SOCKS5 прокси-сервера"
+    else
+        print_success "Selected: Install SOCKS5 proxy server"
     fi
     
+    # Ask for port only if installing
+    if [ "$lang_choice" == "2" ]; then
+        read -r -p "Введите порт для SOCKS5 прокси-сервера [по умолчанию: 1080]: " port_choice
+    else
+        read -r -p "Enter port for SOCKS5 proxy server [default: 1080]: " port_choice
+    fi
+    
+    # Set port parameter with validation
     if [ -z "$port_choice" ]; then
-        port_choice="1080"
-    fi
-    
-    PORT_PARAM="-p $port_choice"
-    if [ "$lang_choice" == "2" ]; then
-        print_success "Порт установлен: $port_choice"
+        port_choice=1080 # Default port
+        if [ "$lang_choice" == "2" ]; then
+            print_success "Используется порт по умолчанию: $port_choice"
+        else
+            print_success "Using default port: $port_choice"
+        fi
+    elif ! [[ "$port_choice" =~ ^[0-9]+$ ]] || [ "$port_choice" -lt 1 ] || [ "$port_choice" -gt 65535 ]; then
+        port_choice=1080 # Invalid port, use default
+        if [ "$lang_choice" == "2" ]; then
+            print_warning "Неправильный порт. Используется порт по умолчанию: $port_choice"
+        else
+            print_warning "Invalid port. Using default port: $port_choice"
+        fi
     else
-        print_success "Port set to: $port_choice"
+        PORT_PARAM="-p $port_choice"
+        if [ "$lang_choice" == "2" ]; then
+            print_success "Порт установлен: $port_choice"
+        else
+            print_success "Port set to: $port_choice"
+        fi
     fi
 fi
 
