@@ -168,7 +168,7 @@ function create_dante_config() {
 # This configuration enables a secure SOCKS5 proxy with user authentication
 
 # The listening address and port
-internal: 0.0.0.0 port=$PORT
+internal: eth0 port=$PORT
 
 # The external interface
 external: eth0
@@ -183,6 +183,8 @@ user.libwrap: nobody
 
 # Client connection settings
 clientmethod: none
+# logoutput: stderr - программа будет писать логи только о критических ошибках
+# Для отладки можно заменить на: logoutput: syslog
 logoutput: stderr
 timeout.negotiate: 30
 timeout.io: 300
@@ -260,14 +262,23 @@ EOL
     echo_success "$(lang_text "PAM authentication configured successfully" "PAM аутентификация успешно настроена")"
 }
 
-# Function to install required packages
+# Function to update system and install required packages
 function install_packages() {
+    local message_en_update="Updating system packages..."
+    local message_ru_update="Обновление системных пакетов..."
+    
+    echo_status "$(lang_text "$message_en_update" "$message_ru_update")"
+    
+    # Update package lists and upgrade system
+    apt-get update
+    apt-get dist-upgrade -y
+    
+    # Install required packages
     local message_en="Installing required packages..."
     local message_ru="Установка необходимых пакетов..."
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
-    apt-get update
     apt-get install -y dante-server libpam-pwdfile sudo ufw whois
     
     echo_success "$(lang_text "Required packages installed successfully" "Необходимые пакеты успешно установлены")"
@@ -386,8 +397,7 @@ function manage_user_credentials() {
     
     # Ask for password with timeout - 60 minutes = 3600 seconds
     echo "$(lang_text "$password_en" "$password_ru")"
-    read -t 3600 -s proxy_password
-    echo
+    read -t 3600 proxy_password
     
     # Use default if empty
     if [ -z "$proxy_password" ]; then
@@ -683,8 +693,23 @@ function show_completion() {
     local message_en_10="Type: SOCKS5"
     local message_ru_10="Тип: SOCKS5"
     
-    local message_en_11="Authentication: Username/Password (as configured with proxy-users command)"
-    local message_ru_11="Аутентификация: Имя пользователя/Пароль (как настроено с помощью команды proxy-users)"
+    local message_en_11="Authentication: Username/Password"
+    local message_ru_11="Аутентификация: Имя пользователя/Пароль"
+    
+    local message_en_12="Username: $proxy_username"
+    local message_ru_12="Имя пользователя: $proxy_username"
+    
+    local message_en_13="Password: $proxy_password"
+    local message_ru_13="Пароль: $proxy_password"
+    
+    # Get server's public IP address
+    local SERVER_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(curl -s icanhazip.com || curl -s ifconfig.me || curl -s api.ipify.org)
+    fi
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP="Your server IP"
+    fi
     
     echo_status "$(lang_text "$message_en_1" "$message_ru_1")"
     echo "$(lang_text "$message_en_2" "$message_ru_2")"
@@ -695,10 +720,32 @@ function show_completion() {
     echo "  $(lang_text "$message_en_6" "$message_ru_6")"
     echo
     echo "$(lang_text "$message_en_7" "$message_ru_7")"
-    echo "  $(lang_text "$message_en_8" "$message_ru_8")"
+    if [ "$SERVER_IP" = "Your server IP" ]; then
+        echo "  $(lang_text "$message_en_8" "$message_ru_8")"
+    else
+        echo "  Host: $SERVER_IP"
+    fi
     echo "  $(lang_text "$message_en_9" "$message_ru_9")"
     echo "  $(lang_text "$message_en_10" "$message_ru_10")"
     echo "  $(lang_text "$message_en_11" "$message_ru_11")"
+    echo "  $(lang_text "$message_en_12" "$message_ru_12")"
+    echo "  $(lang_text "$message_en_13" "$message_ru_13")"
+    
+    # Full connection string
+    local conn_en_1="Connection information (copy this to your SOCKS5 client):"
+    local conn_ru_1="Информация для подключения (скопируйте это в ваш SOCKS5 клиент):"
+    
+    echo
+    echo_status "$(lang_text "$conn_en_1" "$conn_ru_1")"
+    if [ "$SERVER_IP" = "Your server IP" ]; then
+        echo "Server: Your server IP"
+    else
+        echo "Server: $SERVER_IP"
+    fi
+    echo "Port: $PORT"
+    echo "Username: $proxy_username"
+    echo "Password: $proxy_password"
+    echo "Type: SOCKS5"
 }
 
 # Main function to run the script
