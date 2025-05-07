@@ -499,7 +499,37 @@ function install_packages() {
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
     # Install all possible packages that might be needed
-    apt-get install -y dante-server libpam-pwdfile sudo ufw whois iptables systemd python3 gcc make
+    # First install perl dependencies that might be required for dante-server
+    apt-get install -y perl libperl5.32 perl-modules perl-base libperl-dev debhelper 2>/dev/null || true
+    
+    # Install dante-server and other required packages
+    if ! apt-get install -y dante-server; then
+        echo_warning "$(lang_text "Failed to install dante-server from repositories. Trying alternative installation methods..." "Не удалось установить dante-server из репозиториев. Пробуем альтернативные методы установки...")"
+        
+        # Try to install from direct .deb file if apt-get fails
+        if [ ! -f /tmp/dante-server.deb ]; then
+            echo_status "$(lang_text "Downloading dante-server package..." "Загрузка пакета dante-server...")"
+            if wget -q -O /tmp/dante-server.deb http://ftp.debian.org/debian/pool/main/d/dante/dante-server_1.4.2+dfsg-7+b3_amd64.deb; then
+                echo_success "$(lang_text "Downloaded dante-server package" "Загружен пакет dante-server")"
+            else
+                echo_error "$(lang_text "Failed to download dante-server package" "Не удалось загрузить пакет dante-server")"
+                exit 1
+            fi
+        fi
+        
+        # Install the downloaded package
+        echo_status "$(lang_text "Installing dante-server from downloaded package..." "Установка dante-server из загруженного пакета...")"
+        if ! dpkg -i /tmp/dante-server.deb; then
+            apt-get -f install -y
+            if ! dpkg -i /tmp/dante-server.deb; then
+                echo_error "$(lang_text "Failed to install dante-server" "Не удалось установить dante-server")"
+                exit 1
+            fi
+        fi
+    fi
+    
+    # Install remaining packages
+    apt-get install -y libpam-pwdfile sudo whois iptables systemd python3 gcc make
     
     echo_success "$(lang_text "Required packages installed successfully" "Необходимые пакеты успешно установлены")"
 }
