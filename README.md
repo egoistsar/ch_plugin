@@ -11,7 +11,10 @@
 - Простое управление пользователями
 - Автоматический запуск прокси-сервера при загрузке системы
 - Настройка брандмауэра
+- Автоматическое определение IP-адреса и сетевого интерфейса сервера
+- Надежное хранение паролей с использованием нескольких методов шифрования
 - Пользователи не получают административный доступ к серверу
+- Обновление системы перед установкой для обеспечения совместимости
 
 ## Установка
 
@@ -69,7 +72,10 @@ This project provides an easy way to install and configure a secure SOCKS5 proxy
 - Simple user management
 - Automatic proxy server startup on system boot
 - Firewall configuration
+- Automatic detection of server IP address and network interface
+- Reliable password storage using multiple encryption methods
 - Users don't get administrative access to the server
+- System update before installation to ensure compatibility
 
 ## Installation
 

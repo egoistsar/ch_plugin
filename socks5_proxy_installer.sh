@@ -1,10 +1,19 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Socks5 Proxy Server with User Authentication - Interactive Installer
+# ----------------------------------------------------------------------------------
+# Author: egoistsar
+# Usage: installer.sh [-a install|uninstall] [-p PORT] [-l en|ru] [-f]
+# Requires: root, Debian/Ubuntu
 # ----------------------------------------------------------------------------------
 # This script installs and configures Dante SOCKS5 proxy server with user authentication
 # on Ubuntu/Debian systems.
 # ----------------------------------------------------------------------------------
+
+# Строгая обработка ошибок и безопасные пайпы
+set -euo pipefail
+IFS=$'\n\t'
+LOGFILE=/var/log/dante_installer.log
 
 # Color codes for pretty output
 RED='\033[0;31m'
@@ -18,6 +27,8 @@ DEFAULT_PORT=1080
 PORT=$DEFAULT_PORT
 GITHUB_REPO_URL="https://raw.githubusercontent.com/egoistsar/s5proxyserver/main"
 LANGUAGE="en"
+ACTION=""
+FULL_UPGRADE=false
 ACTION="install" # Default action: install or uninstall
 
 # Function to display text based on language
@@ -32,41 +43,84 @@ function lang_text() {
     fi
 }
 
-# Function to display colored status messages
+# Function for logging and displaying colored status messages
+function log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOGFILE"
+}
+
 function echo_status() {
+    log "${BLUE}>> $1${NC}"
     echo -e "\n${BLUE}>> $1${NC}"
 }
 
 # Function to display success messages
 function echo_success() {
+    log "${GREEN}✓ $1${NC}"
     echo -e "\n${GREEN}✓ $1${NC}"
 }
 
 # Function to display error messages
 function echo_error() {
+    log "${RED}✗ $1${NC}"
     echo -e "\n${RED}✗ $1${NC}"
 }
 
 # Function to display warning/info messages
 function echo_warning() {
+    log "${YELLOW}! $1${NC}"
     echo -e "\n${YELLOW}! $1${NC}"
 }
+
+# Function for cleanup on interruption
+function cleanup() {
+    log "Interrupted, rolling back changes..."
+    if [ "$ACTION" == "install" ]; then
+        # Attempt to cleanly remove partial installation
+        if systemctl is-active --quiet dante-server.service 2>/dev/null; then
+            systemctl stop dante-server.service
+        fi
+        if [ -f /etc/dante.conf ]; then
+            rm -f /etc/dante.conf
+        fi
+        if [ -f /etc/systemd/system/dante-server.service ]; then
+            rm -f /etc/systemd/system/dante-server.service
+        fi
+        if [ -d /etc/dante-users ]; then
+            rm -rf /etc/dante-users
+        fi
+    fi
+    echo_error "Installation was interrupted and rolled back."
+    exit 1
+}
+
+# Set up trap for cleanup
+trap cleanup SIGINT SIGTERM
 
 # Function to ask for language preference
 function ask_language() {
     echo "Please select your preferred language / Пожалуйста, выберите предпочитаемый язык:"
     echo "1) English"
     echo "2) Русский"
-    read -p "Enter your choice (1/2): " lang_choice
+    
+    # Явно запрашиваем ввод и делаем паузу для ответа пользователя
+    read -r -p "Enter your choice (1/2): " lang_choice
+    echo
     
     case $lang_choice in
         2)
             LANGUAGE="ru"
+            log "Language set to: ru"
+            echo "Выбран русский язык"
             ;;
         *)
             LANGUAGE="en"
+            log "Language set to: en"
+            echo "English language selected"
             ;;
     esac
+    
+    # Добавляем небольшую паузу для лучшего восприятия пользователем
+    sleep 1
 }
 
 # Function to ask for action (install or uninstall)
@@ -84,16 +138,34 @@ function ask_action() {
     echo "$(lang_text "$prompt_en" "$prompt_ru")"
     echo "1) $(lang_text "$install_en" "$install_ru")"
     echo "2) $(lang_text "$uninstall_en" "$uninstall_ru")"
-    read -p "$(lang_text "Enter your choice (1/2): " "Введите ваш выбор (1/2): ") " action_choice
+    
+    # Явно запрашиваем ввод и ждем ответа пользователя
+    read -r -p "$(lang_text "Enter your choice (1/2): " "Введите ваш выбор (1/2): ") " action_choice
+    echo
     
     case $action_choice in
         2)
             ACTION="uninstall"
+            log "Action set to: uninstall"
+            if [ "$LANGUAGE" == "ru" ]; then
+                echo "Выбрано: Удаление SOCKS5 прокси-сервера"
+            else
+                echo "Selected: Uninstall SOCKS5 proxy server"
+            fi
             ;;
         *)
             ACTION="install"
+            log "Action set to: install"
+            if [ "$LANGUAGE" == "ru" ]; then
+                echo "Выбрано: Установка SOCKS5 прокси-сервера"
+            else
+                echo "Selected: Install SOCKS5 proxy server"
+            fi
             ;;
     esac
+    
+    # Добавляем небольшую паузу для лучшего восприятия пользователем
+    sleep 1
 }
 
 # Function to check if script is running as root
@@ -113,6 +185,7 @@ function check_system() {
     local message_ru="Проверка совместимости системы..."
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
+    sleep 1 # Пауза для лучшего восприятия
     
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -126,15 +199,28 @@ function check_system() {
     case $OS in
         ubuntu|debian)
             echo_success "$(lang_text "Compatible system detected: $OS $VER" "Обнаружена совместимая система: $OS $VER")"
+            sleep 1 # Пауза перед продолжением
             ;;
         *)
             echo_warning "$(lang_text "Unsupported system: $OS $VER. This script is tested on Ubuntu/Debian." "Неподдерживаемая система: $OS $VER. Этот скрипт тестировался на Ubuntu/Debian.")"
-            read -p "$(lang_text "Continue anyway? (y/n): " "Продолжить в любом случае? (y/n): ")" choice
+            read -r -p "$(lang_text "Continue anyway? (y/n): " "Продолжить в любом случае? (y/n): ")" choice
+            echo
             if [[ ! "$choice" =~ ^[Yy]$ ]]; then
+                log "User chose not to continue on unsupported system"
                 exit 1
+            else
+                log "User chose to continue on unsupported system"
             fi
             ;;
     esac
+    
+    # Ждем пользовательский ввод перед переходом к следующему шагу
+    if [ "$LANGUAGE" == "ru" ]; then
+        read -r -p "Нажмите Enter для продолжения..." -t 5 continue_key
+    else
+        read -r -p "Press Enter to continue..." -t 5 continue_key
+    fi
+    echo
 }
 
 # Function to ask user for proxy port
@@ -142,18 +228,36 @@ function ask_port() {
     local message_en="Enter the port number for the SOCKS5 proxy server [default: $DEFAULT_PORT]:"
     local message_ru="Введите номер порта для SOCKS5 прокси-сервера [по умолчанию: $DEFAULT_PORT]:"
     
-    read -p "$(lang_text "$message_en" "$message_ru") " port_input
+    # Явно запрашиваем ввод и ждем ответа пользователя
+    read -r -p "$(lang_text "$message_en" "$message_ru") " port_input
+    echo
     
     if [ -z "$port_input" ]; then
         PORT=$DEFAULT_PORT
+        log "Using default port: $PORT"
+        if [ "$LANGUAGE" == "ru" ]; then
+            echo "Используется порт по умолчанию: $PORT"
+        else
+            echo "Using default port: $PORT"
+        fi
     else
         if [[ "$port_input" =~ ^[0-9]+$ ]] && [ "$port_input" -ge 1 ] && [ "$port_input" -le 65535 ]; then
             PORT=$port_input
+            log "Port set to: $PORT"
+            if [ "$LANGUAGE" == "ru" ]; then
+                echo "Выбран порт: $PORT"
+            else
+                echo "Port set to: $PORT"
+            fi
         else
             echo_error "$(lang_text "Invalid port number. Using default: $DEFAULT_PORT" "Неверный номер порта. Используется по умолчанию: $DEFAULT_PORT")"
             PORT=$DEFAULT_PORT
+            log "Invalid port entered: $port_input, using default: $PORT"
         fi
     fi
+    
+    # Добавляем небольшую паузу для лучшего восприятия пользователем
+    sleep 1
 }
 
 # Function to create Dante configuration file
@@ -163,15 +267,25 @@ function create_dante_config() {
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
+    # Определяем интерфейс с использованием fallback
+    local IFACE
+    if grep -Pq . /dev/null 2>/dev/null; then
+        IFACE=$(ip route get 8.8.8.8 2>/dev/null | grep -oP '(?<=dev )[^ ]+' || echo "eth0")
+    else
+        IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '/dev/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' || echo "eth0")
+    fi
+    
+    log "Detected network interface: $IFACE"
+    
     cat > /etc/dante.conf << EOL
 # Dante SOCKS5 proxy server configuration
 # This configuration enables a secure SOCKS5 proxy with user authentication
 
 # The listening address and port
-internal: eth0 port=$PORT
+internal: 0.0.0.0 port=$PORT
 
-# The external interface
-external: eth0
+# The external interface (auto-detected)
+external: $IFACE
 
 # Authentication method
 socksmethod: username
@@ -262,6 +376,23 @@ EOL
     echo_success "$(lang_text "PAM authentication configured successfully" "PAM аутентификация успешно настроена")"
 }
 
+# Function to check required dependencies
+function check_dependencies() {
+    local message_en="Checking required dependencies..."
+    local message_ru="Проверка необходимых зависимостей..."
+    
+    echo_status "$(lang_text "$message_en" "$message_ru")"
+    
+    for cmd in apt-get ip ufw openssl systemctl; do
+        if ! command -v $cmd >/dev/null; then
+            echo_error "$(lang_text "Required command not found: $cmd" "Требуемая команда не найдена: $cmd")"
+            exit 1
+        fi
+    done
+    
+    echo_success "$(lang_text "All required dependencies are available" "Все необходимые зависимости доступны")"
+}
+
 # Function to update system and install required packages
 function install_packages() {
     local message_en_update="Updating system packages..."
@@ -269,9 +400,17 @@ function install_packages() {
     
     echo_status "$(lang_text "$message_en_update" "$message_ru_update")"
     
-    # Update package lists and upgrade system
+    # Update package lists
     apt-get update
-    apt-get dist-upgrade -y
+    
+    # Full upgrade or just install/upgrade required packages based on flag
+    if [ "$FULL_UPGRADE" = true ]; then
+        log "Performing full system upgrade (dist-upgrade)"
+        apt-get dist-upgrade -y
+    else
+        log "Upgrading only required packages"
+        apt-get install --only-upgrade -y dante-server libpam-pwdfile
+    fi
     
     # Install required packages
     local message_en="Installing required packages..."
@@ -291,11 +430,16 @@ function configure_firewall() {
     
     echo_status "$(lang_text "$message_en" "$message_ru")"
     
-    ufw allow ssh
-    ufw allow $PORT/tcp
+    # Add rules more safely
+    ufw --force allow ssh
+    ufw --force allow $PORT/tcp
     
-    if ! ufw status | grep -q "Status: active"; then
+    # Only enable if not already active
+    if ufw status | grep -qw inactive; then
+        log "Enabling UFW firewall"
         ufw --force enable
+    else
+        log "UFW firewall already active"
     fi
     
     echo_success "$(lang_text "Firewall configured successfully" "Брандмауэр успешно настроен")"
@@ -324,7 +468,12 @@ function add_proxy_user() {
         fi
     fi
     
-    # If all else fails, store plain password (temporary, for testing only)
+    # If all else fails, try whois package's mkpasswd
+    if [ -z "$hashed_password" ] && command -v mkpasswd &>/dev/null; then
+        hashed_password=$(mkpasswd -m sha-512 "$password")
+    fi
+    
+    # If all methods fail, store plain password (temporary, for testing only)
     if [ -z "$hashed_password" ]; then
         echo_warning "$(lang_text "Warning: Could not hash password. Using plain text password temporarily." "Предупреждение: Не удалось хешировать пароль. Временно используется пароль в открытом виде.")"
         hashed_password="$password"
@@ -385,25 +534,49 @@ function manage_user_credentials() {
     local password_err_en="Password cannot be empty. Using default: $default_password"
     local password_err_ru="Пароль не может быть пустым. Используется по умолчанию: $default_password"
     
+    echo_status "$(lang_text "Setting up user credentials" "Настройка учетных данных пользователя")"
+    sleep 1
+    
     # Ask for username with timeout (to prevent hanging) - 60 minutes = 3600 seconds
     echo "$(lang_text "$username_en" "$username_ru")"
-    read -t 3600 proxy_username
+    read -r -t 3600 proxy_username
+    echo
     
     # Use default if empty
     if [ -z "$proxy_username" ]; then
         echo_warning "$(lang_text "$username_err_en" "$username_err_ru")"
         proxy_username="$default_username"
+    else
+        log "Username set to: $proxy_username"
+        if [ "$LANGUAGE" == "ru" ]; then
+            echo "Имя пользователя установлено: $proxy_username"
+        else
+            echo "Username set to: $proxy_username"
+        fi
     fi
     
+    sleep 1
+    
     # Ask for password with timeout - 60 minutes = 3600 seconds
+    # Make password visible instead of hidden to improve user experience
     echo "$(lang_text "$password_en" "$password_ru")"
-    read -t 3600 proxy_password
+    read -r -t 3600 proxy_password
+    echo
     
     # Use default if empty
     if [ -z "$proxy_password" ]; then
         echo_warning "$(lang_text "$password_err_en" "$password_err_ru")"
         proxy_password="$default_password"
+    else
+        log "Password has been set" # не логируем пароль в открытом виде
+        if [ "$LANGUAGE" == "ru" ]; then
+            echo "Пароль установлен"
+        else
+            echo "Password has been set"
+        fi
     fi
+    
+    sleep 1
     
     # Add the user with the provided or default credentials
     add_proxy_user "$proxy_username" "$proxy_password"
@@ -627,19 +800,27 @@ function uninstall_proxy() {
     
     # Stop and disable Dante service
     if systemctl is-active --quiet dante-server.service; then
+        log "Stopping dante-server service"
         systemctl stop dante-server.service
     fi
     
     if systemctl is-enabled --quiet dante-server.service; then
+        log "Disabling dante-server service"
         systemctl disable dante-server.service
     fi
     
     # Remove firewall rules if they exist
-    if command -v ufw &>/dev/null && ufw status | grep -q "$PORT"; then
-        ufw delete allow $PORT/tcp &>/dev/null
+    if command -v ufw &>/dev/null; then
+        if ufw status | grep -q "$PORT"; then
+            log "Removing firewall rule for port $PORT"
+            ufw --force delete allow $PORT/tcp
+        else
+            log "No firewall rule found for port $PORT"
+        fi
     fi
     
     # Remove files and directories
+    log "Removing dante configuration files"
     rm -f /etc/dante.conf
     rm -f /etc/systemd/system/dante-server.service
     rm -f /etc/pam.d/sockd
@@ -648,9 +829,11 @@ function uninstall_proxy() {
     rm -f /usr/local/bin/proxy-users
     
     # Reload systemd
+    log "Reloading systemd configuration"
     systemctl daemon-reload
     
     # Uninstall packages (keep whois, sudo and ufw for system use)
+    log "Removing dante-server and related packages"
     apt-get remove -y dante-server libpam-pwdfile
     apt-get autoremove -y
     
@@ -702,11 +885,32 @@ function show_completion() {
     local message_en_13="Password: $proxy_password"
     local message_ru_13="Пароль: $proxy_password"
     
-    # Get server's public IP address
-    local SERVER_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
-    if [ -z "$SERVER_IP" ]; then
-        SERVER_IP=$(curl -s icanhazip.com || curl -s ifconfig.me || curl -s api.ipify.org)
+    # Get server's public IP address using multiple methods
+    local SERVER_IP
+    
+    # Method 1: Using OpenDNS to get public IP (most reliable for public servers)
+    if command -v dig &>/dev/null; then
+        SERVER_IP=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null)
+    elif command -v host &>/dev/null; then
+        SERVER_IP=$(host myip.opendns.com resolver1.opendns.com 2>/dev/null | tail -n1 | cut -d' ' -f4-)
     fi
+    
+    # Method 2: Using curl to external services
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(curl -s icanhazip.com || curl -s ifconfig.me || curl -s api.ipify.org || curl -s ipecho.net/plain)
+    fi
+    
+    # Method 3: Using ip command for local interfaces
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v "127.0.0" | head -1)
+    fi
+    
+    # Method 4: Fallback to hostname command
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(hostname -I | awk '{print $1}')
+    fi
+    
+    # If all methods fail, use a placeholder
     if [ -z "$SERVER_IP" ]; then
         SERVER_IP="Your server IP"
     fi
@@ -748,6 +952,74 @@ function show_completion() {
     echo "Type: SOCKS5"
 }
 
+# Usage information function
+function usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo
+    echo "Options:"
+    echo "  -a, --action ACTION     Specify action: install or uninstall"
+    echo "  -p, --port PORT         Specify proxy server port (1-65535)"
+    echo "  -l, --language LANG     Specify language: en or ru"
+    echo "  -f, --full-upgrade      Perform full system upgrade"
+    echo "  -h, --help              Display this help message"
+    echo
+    echo "Example:"
+    echo "  $0 -a install -p 1080 -l en"
+    echo "  $0 --action uninstall"
+    exit 1
+}
+
+# Parse command line arguments
+function parse_arguments() {
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -a|--action)
+                if [[ "$2" == "install" || "$2" == "uninstall" ]]; then
+                    ACTION="$2"
+                    log "Action set to: $ACTION"
+                else
+                    echo_error "Invalid action: $2. Use 'install' or 'uninstall'"
+                    usage
+                fi
+                shift 2
+                ;;
+            -p|--port)
+                if [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -ge 1 ] && [ "$2" -le 65535 ]; then
+                    PORT="$2"
+                    log "Port set to: $PORT"
+                else
+                    echo_error "Invalid port: $2. Must be between 1-65535"
+                    usage
+                fi
+                shift 2
+                ;;
+            -l|--language)
+                if [[ "$2" == "en" || "$2" == "ru" ]]; then
+                    LANGUAGE="$2"
+                    log "Language set to: $LANGUAGE"
+                else
+                    echo_error "Invalid language: $2. Use 'en' or 'ru'"
+                    usage
+                fi
+                shift 2
+                ;;
+            -f|--full-upgrade)
+                FULL_UPGRADE=true
+                log "Full system upgrade enabled"
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                echo_error "Unknown option: $1"
+                usage
+                ;;
+        esac
+    done
+}
+
 # Main function to run the script
 function main() {
     # Clear screen
@@ -759,17 +1031,41 @@ function main() {
     echo "====================================================="
     echo
     
-    # Ask for language preference
-    ask_language
+    # Parse command line arguments if any
+    if [[ $# -gt 0 ]]; then
+        parse_arguments "$@"
+    fi
+    
+    # Ask for language preference if not set from command line
+    if [[ -z "$LANGUAGE" ]]; then
+        ask_language
+    fi
+    export LANGUAGE
     
     # Check if running as root
     check_root
     
+    # Check required dependencies
+    check_dependencies
+    sleep 1 # Пауза между шагами
+    
     # Check system compatibility
     check_system
     
-    # Ask for action (install or uninstall)
-    ask_action
+    # Ask for action (install or uninstall) if not set from command line
+    if [[ -z "$ACTION" ]]; then
+        ask_action
+    fi
+    
+    # Добавляем пользователю возможность подтвердить действие перед продолжением
+    if [ "$LANGUAGE" == "ru" ]; then
+        echo -e "\nВыбранное действие: $([ "$ACTION" == "install" ] && echo "Установка" || echo "Удаление") SOCKS5 прокси-сервера"
+        read -r -p "Нажмите Enter для продолжения или Ctrl+C для отмены..." -t 10 continue_key
+    else
+        echo -e "\nSelected action: $([ "$ACTION" == "install" ] && echo "Install" || echo "Uninstall") SOCKS5 proxy server"
+        read -r -p "Press Enter to continue or Ctrl+C to cancel..." -t 10 continue_key
+    fi
+    echo
     
     # Perform action based on user's choice
     if [ "$ACTION" == "uninstall" ]; then
@@ -778,32 +1074,57 @@ function main() {
     else
         # Continue with installation
         
-        # Ask for proxy port
-        ask_port
+        # Ask for proxy port if not set from command line
+        if [[ -z "$PORT" ]]; then
+            ask_port
+        fi
+        
+        # Validate port
+        if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((PORT<1 || PORT>65535)); then
+            log "Invalid port: $PORT"
+            echo_error "$(lang_text "Invalid port number: $PORT" "Неверный номер порта: $PORT")"
+            exit 1
+        fi
+        
+        # Подтверждение перед обновлением пакетов
+        echo_status "$(lang_text "Starting system update and package installation" "Начало обновления системы и установки пакетов")"
+        if [ "$LANGUAGE" == "ru" ]; then
+            read -r -p "Продолжить? (Enter для продолжения)" -t 5 continue_key
+        else
+            read -r -p "Continue? (Press Enter to continue)" -t 5 continue_key
+        fi
+        echo
         
         # Install required packages
         install_packages
+        sleep 1 # Пауза между шагами установки
         
         # Create Dante configuration
         create_dante_config
+        sleep 1
         
         # Create systemd service for Dante
         create_dante_service
+        sleep 1
         
         # Setup PAM authentication
         setup_pam_auth
+        sleep 1
         
         # Configure firewall
         configure_firewall
+        sleep 1
         
         # Enable and start Dante service
         echo_status "$(lang_text "Enabling and starting Dante service..." "Включение и запуск сервиса Dante...")"
         systemctl daemon-reload
         systemctl enable dante-server.service
         systemctl restart dante-server.service
+        sleep 1
         
         # Create user management script
         create_management_script
+        sleep 1
         
         # Ask for proxy user credentials
         manage_user_credentials
@@ -813,7 +1134,7 @@ function main() {
     fi
 }
 
-# Run the main function
-main
+# Run the main function with all command line arguments
+main "$@"
 
 exit 0
