@@ -1,98 +1,47 @@
-# Безопасный SOCKS5 прокси-сервер с авторизацией
+# SOCKS5 Proxy Server Installer
 
-Этот проект предоставляет простой способ установки и настройки безопасного SOCKS5 прокси-сервера с авторизацией пользователя по логину и паролю на Ubuntu/Debian серверах.
+## About
 
-## Особенности
-
-- Установка SOCKS5 прокси-сервера с одной команды
-- Поддержка авторизации по логину и паролю
-- Интерактивная настройка на русском или английском языках
-- Возможность удаления прокси-сервера одной командой
-- Простое управление пользователями
-- Автоматический запуск прокси-сервера при загрузке системы
-- Настройка брандмауэра
-- Автоматическое определение IP-адреса и сетевого интерфейса сервера
-- Надежное хранение паролей с использованием нескольких методов шифрования
-- Пользователи не получают административный доступ к серверу
-- Обновление системы перед установкой для обеспечения совместимости
-
-## Установка
-
-Установка производится одной командой:
-
-```bash
-curl -s https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/socks5_proxy_installer.sh | sudo bash
-```
-
-Скрипт установки проведет вас через процесс настройки, задавая необходимые вопросы на выбранном вами языке (русский или английский).
-
-## Управление пользователями
-
-После установки вы можете управлять пользователями с помощью следующих команд:
-
-```bash
-# Добавить пользователя
-sudo proxy-users add USERNAME PASSWORD
-
-# Удалить пользователя
-sudo proxy-users remove USERNAME
-
-# Показать список пользователей
-sudo proxy-users list
-```
-
-## Подключение к прокси
-
-Для подключения к прокси используйте следующие параметры:
-
-- **Хост**: IP-адрес вашего сервера
-- **Порт**: 1080 (по умолчанию, может быть изменен при установке)
-- **Тип прокси**: SOCKS5
-- **Аутентификация**: Логин/Пароль (настроенные через команду proxy-users)
-
-## Безопасность
-
-- Сервис работает с авторизацией пользователя
-- Пароли хранятся в зашифрованном виде
-- Настроен брандмауэр, открывающий только необходимые порты
-- Пользователи прокси не получают административный доступ к серверу
-
----
-
-# Secure SOCKS5 Proxy Server with Authentication
-
-This project provides an easy way to install and configure a secure SOCKS5 proxy server with username/password authentication on Ubuntu/Debian servers.
+This is a complete SOCKS5 proxy server solution for Ubuntu/Debian servers. The script installs and configures Dante SOCKS5 proxy server with username/password authentication, allows you to manage users, and sets up all necessary configurations with a single command.
 
 ## Features
 
-- One-command SOCKS5 proxy server installation
-- Username/password authentication support
-- Interactive setup in Russian or English
-- Option to uninstall the proxy server with the same command
-- Simple user management
-- Automatic proxy server startup on system boot
-- Firewall configuration
-- Automatic detection of server IP address and network interface
-- Reliable password storage using multiple encryption methods
-- Users don't get administrative access to the server
-- System update before installation to ensure compatibility
+- One-command installation via curl
+- User-friendly interface in English and Russian
+- Username/password authentication
+- Automatic IP detection with multiple fallback methods
+- Secure password storage
+- Automatic firewall configuration
+- System service setup for automatic start on boot
+- User management tool
 
 ## Installation
 
-Installation is done with a single command:
+To install the SOCKS5 proxy server, run the following command on your Ubuntu/Debian server:
 
 ```bash
-curl -s https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/socks5_proxy_installer.sh | sudo bash
+curl -s -L https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh | sudo bash
 ```
 
-The installation script will guide you through the setup process, asking necessary questions in your chosen language (Russian or English).
+Or download and run manually:
+
+```bash
+# Download the script
+wget https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh
+
+# Make it executable
+chmod +x setup_socks_proxy.sh
+
+# Run the script with root privileges
+sudo ./setup_socks_proxy.sh
+```
 
 ## User Management
 
-After installation, you can manage users with the following commands:
+After installation, you can manage users with the `proxy-users` command:
 
 ```bash
-# Add a user
+# Add a new user
 sudo proxy-users add USERNAME PASSWORD
 
 # Remove a user
@@ -102,18 +51,107 @@ sudo proxy-users remove USERNAME
 sudo proxy-users list
 ```
 
-## Connecting to the Proxy
+## Connection Details
 
-To connect to your proxy, use the following parameters:
+After installation, you can connect to your SOCKS5 proxy using:
 
-- **Host**: Your server IP address
-- **Port**: 1080 (default, can be changed during installation)
-- **Proxy Type**: SOCKS5
-- **Authentication**: Username/Password (configured via proxy-users command)
+- **Protocol**: SOCKS5
+- **Server**: Your server's IP address
+- **Port**: 1080 (default, can be customized during installation)
+- **Authentication**: Username/password as configured
 
-## Security
+## Uninstallation
 
-- The service runs with user authentication
-- Passwords are stored in encrypted form
-- Firewall is configured to open only necessary ports
-- Proxy users don't get administrative access to the server
+To uninstall the SOCKS5 proxy server, run:
+
+```bash
+curl -s -L https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh | sudo bash
+```
+
+And select the "Uninstall" option when prompted.
+
+## Requirements
+
+- Ubuntu or Debian server
+- Root access
+- Internet connection for downloading packages
+
+---
+
+# Установщик SOCKS5 прокси-сервера
+
+## О проекте
+
+Это полное решение SOCKS5 прокси-сервера для серверов Ubuntu/Debian. Скрипт устанавливает и настраивает Dante SOCKS5 прокси-сервер с аутентификацией по имени пользователя/паролю, позволяет управлять пользователями и выполняет все необходимые настройки одной командой.
+
+## Возможности
+
+- Установка одной командой через curl
+- Удобный интерфейс на английском и русском языках
+- Аутентификация по имени пользователя/паролю
+- Автоматическое определение IP с несколькими методами резервного копирования
+- Безопасное хранение паролей
+- Автоматическая настройка брандмауэра
+- Настройка системного сервиса для автоматического запуска при загрузке
+- Инструмент управления пользователями
+
+## Установка
+
+Для установки SOCKS5 прокси-сервера выполните следующую команду на вашем сервере Ubuntu/Debian:
+
+```bash
+curl -s -L https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh | sudo bash
+```
+
+Или загрузите и запустите вручную:
+
+```bash
+# Скачать скрипт
+wget https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh
+
+# Сделать его исполняемым
+chmod +x setup_socks_proxy.sh
+
+# Запустить скрипт с правами root
+sudo ./setup_socks_proxy.sh
+```
+
+## Управление пользователями
+
+После установки вы можете управлять пользователями с помощью команды `proxy-users`:
+
+```bash
+# Добавить нового пользователя
+sudo proxy-users add ИМЯ_ПОЛЬЗОВАТЕЛЯ ПАРОЛЬ
+
+# Удалить пользователя
+sudo proxy-users remove ИМЯ_ПОЛЬЗОВАТЕЛЯ
+
+# Показать всех пользователей
+sudo proxy-users list
+```
+
+## Детали подключения
+
+После установки вы можете подключиться к вашему SOCKS5 прокси, используя:
+
+- **Протокол**: SOCKS5
+- **Сервер**: IP-адрес вашего сервера
+- **Порт**: 1080 (по умолчанию, можно настроить во время установки)
+- **Аутентификация**: Имя пользователя/пароль, как настроено
+
+## Удаление
+
+Для удаления SOCKS5 прокси-сервера выполните:
+
+```bash
+curl -s -L https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh | sudo bash
+```
+
+И выберите опцию "Удалить" при появлении запроса.
+
+## Требования
+
+- Сервер Ubuntu или Debian
+- Доступ root
+- Интернет-соединение для загрузки пакетов
