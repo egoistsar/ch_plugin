@@ -18,6 +18,7 @@ DEFAULT_PORT=1080
 PORT=$DEFAULT_PORT
 GITHUB_REPO_URL="https://raw.githubusercontent.com/egoistsar/s5proxyserver/main"
 LANGUAGE="en"
+ACTION="install" # Default action: install or uninstall
 
 # Function to display text based on language
 function lang_text() {
@@ -64,6 +65,33 @@ function ask_language() {
             ;;
         *)
             LANGUAGE="en"
+            ;;
+    esac
+}
+
+# Function to ask for action (install or uninstall)
+function ask_action() {
+    local install_en="Install SOCKS5 proxy server"
+    local install_ru="Установить SOCKS5 прокси-сервер"
+    
+    local uninstall_en="Uninstall SOCKS5 proxy server"
+    local uninstall_ru="Удалить SOCKS5 прокси-сервер"
+    
+    local prompt_en="Select an action:"
+    local prompt_ru="Выберите действие:"
+    
+    echo
+    echo "$(lang_text "$prompt_en" "$prompt_ru")"
+    echo "1) $(lang_text "$install_en" "$install_ru")"
+    echo "2) $(lang_text "$uninstall_en" "$uninstall_ru")"
+    read -p "$(lang_text "Enter your choice (1/2): " "Введите ваш выбор (1/2): ") " action_choice
+    
+    case $action_choice in
+        2)
+            ACTION="uninstall"
+            ;;
+        *)
+            ACTION="install"
             ;;
     esac
 }
@@ -517,7 +545,50 @@ EOL
     echo_success "$(lang_text "User management script created successfully" "Скрипт управления пользователями успешно создан")"
 }
 
-# Function to display completion message
+# Function to uninstall SOCKS5 proxy server
+function uninstall_proxy() {
+    local message_en="Uninstalling SOCKS5 proxy server..."
+    local message_ru="Удаление SOCKS5 прокси-сервера..."
+    
+    echo_status "$(lang_text "$message_en" "$message_ru")"
+    
+    # Stop and disable Dante service
+    if systemctl is-active --quiet dante-server.service; then
+        systemctl stop dante-server.service
+    fi
+    
+    if systemctl is-enabled --quiet dante-server.service; then
+        systemctl disable dante-server.service
+    fi
+    
+    # Remove firewall rules if they exist
+    if command -v ufw &>/dev/null && ufw status | grep -q "1080"; then
+        ufw delete allow 1080/tcp &>/dev/null
+    fi
+    
+    # Remove files and directories
+    rm -f /etc/dante.conf
+    rm -f /etc/systemd/system/dante-server.service
+    rm -f /etc/pam.d/sockd
+    rm -rf /etc/dante-users
+    rm -f /etc/dante-language
+    rm -f /usr/local/bin/proxy-users
+    
+    # Reload systemd
+    systemctl daemon-reload
+    
+    # Uninstall packages (keep whois, sudo and ufw for system use)
+    apt-get remove -y dante-server libpam-pwdfile
+    apt-get autoremove -y
+    
+    # Display completion message
+    local success_en="SOCKS5 proxy server has been successfully uninstalled."
+    local success_ru="SOCKS5 прокси-сервер успешно удален."
+    
+    echo_success "$(lang_text "$success_en" "$success_ru")"
+}
+
+# Function to display completion message for installation
 function show_completion() {
     local message_en_1="SOCKS5 proxy server setup complete!"
     local message_ru_1="Настройка SOCKS5 прокси-сервера завершена!"
@@ -567,7 +638,7 @@ function show_completion() {
     echo "  $(lang_text "$message_en_11" "$message_ru_11")"
 }
 
-# Main function to run the installation
+# Main function to run the script
 function main() {
     # Clear screen
     clear
@@ -587,38 +658,49 @@ function main() {
     # Check system compatibility
     check_system
     
-    # Ask for proxy port
-    ask_port
+    # Ask for action (install or uninstall)
+    ask_action
     
-    # Install required packages
-    install_packages
-    
-    # Create Dante configuration
-    create_dante_config
-    
-    # Create systemd service for Dante
-    create_dante_service
-    
-    # Setup PAM authentication
-    setup_pam_auth
-    
-    # Configure firewall
-    configure_firewall
-    
-    # Enable and start Dante service
-    echo_status "$(lang_text "Enabling and starting Dante service..." "Включение и запуск сервиса Dante...")"
-    systemctl daemon-reload
-    systemctl enable dante-server.service
-    systemctl restart dante-server.service
-    
-    # Create user management script
-    create_management_script
-    
-    # Ask for proxy user credentials
-    manage_user_credentials
-    
-    # Display completion message
-    show_completion
+    # Perform action based on user's choice
+    if [ "$ACTION" == "uninstall" ]; then
+        # Run uninstallation routine
+        uninstall_proxy
+    else
+        # Continue with installation
+        
+        # Ask for proxy port
+        ask_port
+        
+        # Install required packages
+        install_packages
+        
+        # Create Dante configuration
+        create_dante_config
+        
+        # Create systemd service for Dante
+        create_dante_service
+        
+        # Setup PAM authentication
+        setup_pam_auth
+        
+        # Configure firewall
+        configure_firewall
+        
+        # Enable and start Dante service
+        echo_status "$(lang_text "Enabling and starting Dante service..." "Включение и запуск сервиса Dante...")"
+        systemctl daemon-reload
+        systemctl enable dante-server.service
+        systemctl restart dante-server.service
+        
+        # Create user management script
+        create_management_script
+        
+        # Ask for proxy user credentials
+        manage_user_credentials
+        
+        # Display completion message
+        show_completion
+    fi
 }
 
 # Run the main function

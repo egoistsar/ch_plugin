@@ -7,6 +7,7 @@
 - Установка SOCKS5 прокси-сервера с одной команды
 - Поддержка авторизации по логину и паролю
 - Интерактивная настройка на русском или английском языках
+- Возможность удаления прокси-сервера одной командой
 - Простое управление пользователями
 - Автоматический запуск прокси-сервера при загрузке системы
 - Настройка брандмауэра
@@ -64,6 +65,7 @@ This project provides an easy way to install and configure a secure SOCKS5 proxy
 - One-command SOCKS5 proxy server installation
 - Username/password authentication support
 - Interactive setup in Russian or English
+- Option to uninstall the proxy server with the same command
 - Simple user management
 - Automatic proxy server startup on system boot
 - Firewall configuration
