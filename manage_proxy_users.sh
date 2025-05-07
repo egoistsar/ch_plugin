@@ -18,6 +18,7 @@ if ! command -v mkpasswd &> /dev/null; then
     apt-get update && apt-get install -y whois
 fi
 
+# Define user database location to prevent "unbound variable" errors
 USER_DB="/etc/dante-users/users.pwd"
 
 # Show usage information
@@ -103,20 +104,26 @@ function remove_user() {
 }
 
 # Main script logic
-case "$1" in
-    add)
-        add_user "$2" "$3"
-        ;;
-    remove)
-        remove_user "$2"
-        ;;
-    list)
-        list_users
-        ;;
-    *)
-        show_usage
-        exit 1
-        ;;
-esac
+# Проверяем наличие параметра, чтобы избежать ошибки "unbound variable"
+if [ -z "$1" ]; then
+    show_usage
+    exit 1
+else
+    case "$1" in
+        add)
+            add_user "$2" "$3"
+            ;;
+        remove)
+            remove_user "$2"
+            ;;
+        list)
+            list_users
+            ;;
+        *)
+            show_usage
+            exit 1
+            ;;
+    esac
+fi
 
 exit 0
