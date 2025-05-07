@@ -403,7 +403,10 @@ logoutput: syslog
 
 # Server settings
 internal: 0.0.0.0 port = $PORT
-external: eth0
+
+# Определяем внешний интерфейс автоматически
+# Обратите внимание: автоматическое определение интерфейса
+external.rotation: same-same
 
 # Authentication method
 socksmethod: username
@@ -429,9 +432,6 @@ socks pass {
     log: error connect disconnect
     socksmethod: username
 }
-
-# Automatically detect network interface
-dynamicinterfaces: eth0 tun0 ens3 ens5 enp0s3 enp0s8 enp1s0 enp2s0 enp3s0 enp4s0 enp5s0 venet0 ens18 ens160
 EOL
     
     echo_success "$(lang_text "Dante configuration created successfully" "Конфигурация Dante успешно создана")"
