@@ -217,12 +217,8 @@ function check_system() {
             ;;
     esac
     
-    # Ждем пользовательский ввод перед переходом к следующему шагу
-    if [ "$LANGUAGE" == "ru" ]; then
-        read -r -p "Нажмите Enter для продолжения..." -t 5 continue_key
-    else
-        read -r -p "Press Enter to continue..." -t 5 continue_key
-    fi
+    # Добавляем небольшую паузу для лучшего восприятия информации
+    sleep 1
     echo
 }
 
@@ -1868,11 +1864,11 @@ function main() {
     # Добавляем пользователю возможность подтвердить действие перед продолжением
     if [ "$LANGUAGE" == "ru" ]; then
         echo -e "\nВыбранное действие: $([ "$ACTION" == "install" ] && echo "Установка" || echo "Удаление") SOCKS5 прокси-сервера"
-        read -r -p "Нажмите Enter для продолжения или Ctrl+C для отмены..." -t 10 continue_key
     else
         echo -e "\nSelected action: $([ "$ACTION" == "install" ] && echo "Install" || echo "Uninstall") SOCKS5 proxy server"
-        read -r -p "Press Enter to continue or Ctrl+C to cancel..." -t 10 continue_key
     fi
+    # Добавляем небольшую паузу для восприятия информации
+    sleep 1
     echo
     
     # Perform action based on user's choice
@@ -1931,13 +1927,10 @@ function main() {
             exit 1
         fi
         
-        # Подтверждение перед обновлением пакетов
+        # Информируем о начале установки, но не запрашиваем подтверждение
         echo_status "$(lang_text "Starting system update and package installation" "Начало обновления системы и установки пакетов")"
-        if [ "$LANGUAGE" == "ru" ]; then
-            read -r -p "Продолжить? (Enter для продолжения)" -t 5 continue_key
-        else
-            read -r -p "Continue? (Press Enter to continue)" -t 5 continue_key
-        fi
+        # Небольшая пауза для восприятия информации
+        sleep 1
         echo
         
         # Install required packages

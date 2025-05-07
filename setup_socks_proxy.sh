@@ -181,32 +181,22 @@ if [ "$action_choice" != "2" ]; then
     fi
 fi
 
-# Show confirmation message
+# Show selected parameters summary (without confirmation)
 echo
 if [ "$lang_choice" == "2" ]; then
     echo -e "${BOLD}Выбранные параметры:${NC}"
     echo -e "  Язык: $([ "$lang_choice" == "2" ] && echo "Русский" || echo "English")"
     echo -e "  Действие: $([ "$action_choice" == "2" ] && echo "Удаление" || echo "Установка")"
     [ "$action_choice" != "2" ] && echo -e "  Порт: $port_choice"
-    
-    read -r -p "Продолжить с указанными параметрами? (y/n): " confirm
 else
     echo -e "${BOLD}Selected parameters:${NC}"
     echo -e "  Language: $([ "$lang_choice" == "2" ] && echo "Russian" || echo "English")"
     echo -e "  Action: $([ "$action_choice" == "2" ] && echo "Uninstall" || echo "Install")"
     [ "$action_choice" != "2" ] && echo -e "  Port: $port_choice"
-    
-    read -r -p "Continue with these parameters? (y/n): " confirm
 fi
 
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    if [ "$lang_choice" == "2" ]; then
-        print_warning "Установка отменена пользователем"
-    else
-        print_warning "Installation canceled by user"
-    fi
-    exit 0
-fi
+# Small delay to allow user to see the parameters
+sleep 1
 
 # Download the installer script with progress indication
 print_status "Downloading installer script..."
