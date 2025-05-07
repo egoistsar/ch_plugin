@@ -401,12 +401,8 @@ function create_dante_config() {
 # Log settings
 logoutput: syslog
 
-# Server settings
+# Server settings - слушаем на всех интерфейсах
 internal: 0.0.0.0 port = $PORT
-
-# Определяем внешний интерфейс автоматически
-# Обратите внимание: автоматическое определение интерфейса
-external.rotation: same-same
 
 # Authentication method
 socksmethod: username
