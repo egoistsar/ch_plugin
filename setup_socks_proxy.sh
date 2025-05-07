@@ -3,6 +3,19 @@
 # This is a wrapper script that will execute the SOCKS5 Proxy Server installer
 # It includes improved progress indication, error handling, and user interaction
 
+# Ensure script is run in interactive mode
+if [ ! -t 0 ]; then
+    echo "This script must be run in interactive mode. Please download and run it directly."
+    echo "Use these commands:"
+    echo "wget https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh"
+    echo "chmod +x setup_socks_proxy.sh"
+    echo "sudo ./setup_socks_proxy.sh"
+    exit 1
+fi
+
+# Ensure stdin is a terminal
+exec < /dev/tty
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

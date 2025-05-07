@@ -17,13 +17,7 @@ This is a complete SOCKS5 proxy server solution for Ubuntu/Debian servers. The s
 
 ## Installation
 
-To install the SOCKS5 proxy server, run the following command on your Ubuntu/Debian server:
-
-```bash
-curl -s -L https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh | sudo bash
-```
-
-Or download and run manually:
+To install the SOCKS5 proxy server, download and run the script manually:
 
 ```bash
 # Download the script
@@ -35,6 +29,8 @@ chmod +x setup_socks_proxy.sh
 # Run the script with root privileges
 sudo ./setup_socks_proxy.sh
 ```
+
+> **Important**: The script requires interactive input and must be run directly from your terminal, not through a pipe (curl | bash).
 
 ## User Management
 
@@ -142,13 +138,22 @@ sudo proxy-users list
 
 ## Удаление
 
-Для удаления SOCKS5 прокси-сервера выполните:
+Для удаления SOCKS5 прокси-сервера загрузите и запустите скрипт:
 
 ```bash
-curl -s -L https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh | sudo bash
+# Скачать скрипт
+wget https://raw.githubusercontent.com/egoistsar/s5proxyserver/main/setup_socks_proxy.sh
+
+# Сделать его исполняемым
+chmod +x setup_socks_proxy.sh
+
+# Запустить скрипт с правами root
+sudo ./setup_socks_proxy.sh
 ```
 
 И выберите опцию "Удалить" при появлении запроса.
+
+> **Важно**: Скрипт требует интерактивного ввода и должен запускаться непосредственно из вашего терминала, а не через конвейер (curl | bash).
 
 ## Требования
 
