@@ -484,6 +484,25 @@ function setup_dante_service() {
     
     case "$INIT_SYSTEM" in
         systemd)
+            # Находим точный путь к бинарному файлу sockd
+            SOCKD_BIN=$(command -v sockd)
+            
+            # Если бинарный файл не найден в PATH, ищем его в стандартных местах
+            if [ -z "$SOCKD_BIN" ]; then
+                if [ -x "/usr/sbin/sockd" ]; then
+                    SOCKD_BIN="/usr/sbin/sockd"
+                elif [ -x "/usr/bin/sockd" ]; then
+                    SOCKD_BIN="/usr/bin/sockd"
+                elif [ -x "/usr/local/sbin/sockd" ]; then
+                    SOCKD_BIN="/usr/local/sbin/sockd"
+                else
+                    echo_warning "$(lang_text "sockd binary not found, using default path /usr/sbin/sockd" "Бинарный файл sockd не найден, используем путь по умолчанию /usr/sbin/sockd")"
+                    SOCKD_BIN="/usr/sbin/sockd"
+                fi
+            fi
+            
+            log "Using sockd binary: $SOCKD_BIN"
+            
             # Create systemd service file
             cat > /etc/systemd/system/dante-server.service << EOL
 [Unit]
@@ -492,7 +511,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/sbin/sockd -f /etc/dante.conf
+ExecStart=$SOCKD_BIN -f /etc/dante.conf
 Restart=on-failure
 RestartSec=5s
 
@@ -506,6 +525,25 @@ EOL
             ;;
             
         sysv)
+            # Находим точный путь к бинарному файлу sockd
+            SOCKD_BIN=$(command -v sockd)
+            
+            # Если бинарный файл не найден в PATH, ищем его в стандартных местах
+            if [ -z "$SOCKD_BIN" ]; then
+                if [ -x "/usr/sbin/sockd" ]; then
+                    SOCKD_BIN="/usr/sbin/sockd"
+                elif [ -x "/usr/bin/sockd" ]; then
+                    SOCKD_BIN="/usr/bin/sockd"
+                elif [ -x "/usr/local/sbin/sockd" ]; then
+                    SOCKD_BIN="/usr/local/sbin/sockd"
+                else
+                    echo_warning "$(lang_text "sockd binary not found, using default path /usr/sbin/sockd" "Бинарный файл sockd не найден, используем путь по умолчанию /usr/sbin/sockd")"
+                    SOCKD_BIN="/usr/sbin/sockd"
+                fi
+            fi
+            
+            log "Using sockd binary: $SOCKD_BIN"
+            
             # Create SysV init script
             cat > /etc/init.d/dante-server << EOL
 #!/bin/sh
@@ -522,7 +560,7 @@ EOL
 PATH=/sbin:/usr/sbin:/bin:/usr/bin
 DESC="SOCKS5 Proxy Server"
 NAME=dante-server
-DAEMON=/usr/sbin/sockd
+DAEMON=$SOCKD_BIN
 DAEMON_ARGS="-f /etc/dante.conf"
 PIDFILE=/var/run/\$NAME.pid
 
@@ -567,13 +605,32 @@ EOL
             ;;
             
         openrc)
+            # Находим точный путь к бинарному файлу sockd
+            SOCKD_BIN=$(command -v sockd)
+            
+            # Если бинарный файл не найден в PATH, ищем его в стандартных местах
+            if [ -z "$SOCKD_BIN" ]; then
+                if [ -x "/usr/sbin/sockd" ]; then
+                    SOCKD_BIN="/usr/sbin/sockd"
+                elif [ -x "/usr/bin/sockd" ]; then
+                    SOCKD_BIN="/usr/bin/sockd"
+                elif [ -x "/usr/local/sbin/sockd" ]; then
+                    SOCKD_BIN="/usr/local/sbin/sockd"
+                else
+                    echo_warning "$(lang_text "sockd binary not found, using default path /usr/sbin/sockd" "Бинарный файл sockd не найден, используем путь по умолчанию /usr/sbin/sockd")"
+                    SOCKD_BIN="/usr/sbin/sockd"
+                fi
+            fi
+            
+            log "Using sockd binary: $SOCKD_BIN"
+            
             # Create OpenRC init script
             cat > /etc/init.d/dante-server << EOL
 #!/sbin/openrc-run
 
 name="dante-server"
 description="SOCKS5 Proxy Server"
-command="/usr/sbin/sockd"
+command="$SOCKD_BIN"
 command_args="-f /etc/dante.conf"
 pidfile="/run/\${name}.pid"
 command_background=true
