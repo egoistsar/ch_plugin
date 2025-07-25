@@ -1,0 +1,13 @@
+{
+  "name": "Advice New Tab",
+  "description": "Shows random advice with a wallpaper on each new tab.",
+  "version": "1.0",
+  "manifest_version": 3,
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "host_permissions": [
+    "https://api.adviceslip.com/*",
+    "https://source.unsplash.com/*"
+  ]
+}
