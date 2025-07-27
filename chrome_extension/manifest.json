@@ -3,6 +3,9 @@
   "description": "Shows random advice with a wallpaper on each new tab.",
   "version": "1.0",
   "manifest_version": 3,
+  "icons": {
+    "128": "icon.png"
+  },
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },
