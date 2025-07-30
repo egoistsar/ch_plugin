@@ -9,7 +9,7 @@ async function loadContent() {
   }
 
   try {
-    const imgUrl = 'https://minimalistic-wallpaper.demolab.com/?random';
+    const imgUrl = 'https://minimalistic-wallpaper.demolab.com/?random'; // раньше был https://minimalistic-wallpaper.demolab.com/?random
     document.body.style.backgroundImage = `url('${imgUrl}')`;
   } catch (e) {
     // ignore image errors

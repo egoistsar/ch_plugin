@@ -11,6 +11,6 @@
   },
   "host_permissions": [
     "https://fucking-great-advice.ru/*",
-    "https://minimalistic-wallpaper.demolab.com/*"
+    "https://minimalistic-wallpaper.demolab.com/?random/*", // раньше был https://minimalistic-wallpaper.demolab.com/?random
   ]
 }
